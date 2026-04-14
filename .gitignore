@@ -1,0 +1,33 @@
+# 环境文件和缓存
+.env
+.env.local
+*.pyc
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 数据和日志
+logs/
+data/
+*.log
+
+# 依赖
+venv/
+env/
+.weights/
+node_modules/
+
+# 项目特定
+.cache/
+dist/
+build/
+*.egg-info/
