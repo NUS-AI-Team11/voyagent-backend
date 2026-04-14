@@ -1,5 +1,5 @@
 """
-成本优化 Agent 测试
+Tests for Cost Optimization Agent.
 """
 
 import pytest
@@ -10,13 +10,11 @@ from datetime import date
 
 @pytest.fixture
 def agent():
-    """创建 Agent 实例"""
     return CostOptimizationAgent()
 
 
 @pytest.fixture
 def sample_context():
-    """创建示例上下文"""
     context = PlanningContext()
     context.travel_profile = TravelProfile(
         destination='Rome',
@@ -36,26 +34,22 @@ def sample_context():
 
 
 def test_agent_initialization(agent):
-    """测试 Agent 初始化"""
     assert agent.name == "Cost Optimization Agent"
 
 
 def test_process_valid_input(agent, sample_context):
-    """测试有效输入的处理"""
     result = agent.process(sample_context)
-    
+
     assert result is not None
 
 
 def test_validate_input_success(agent, sample_context):
-    """测试输入验证成功"""
     assert agent.validate_input(sample_context) is True
 
 
 def test_validate_input_missing_itinerary(agent, sample_context):
-    """测试缺少行程的输入验证"""
     sample_context.itinerary = None
-    
+
     assert agent.validate_input(sample_context) is False
 
 

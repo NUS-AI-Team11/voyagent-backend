@@ -1,5 +1,5 @@
 """
-cost_optimization 包 __init__.py
+cost_optimization package
 """
 
 from agents.cost_optimization.agent import CostOptimizationAgent

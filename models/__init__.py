@@ -1,5 +1,5 @@
 """
-models 包 __init__.py
+models package
 """
 
 from models.schemas import (

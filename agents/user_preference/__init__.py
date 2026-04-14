@@ -1,5 +1,5 @@
 """
-user_preference 包 __init__.py
+user_preference package
 """
 
 from agents.user_preference.agent import UserPreferenceAgent

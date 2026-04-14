@@ -1,10 +1,10 @@
 """
-路线&酒店规划 Agent - 规划完整的日程和酒店安排
+Route & Hotel Planning Agent - plans the full itinerary and hotel arrangement.
 """
 
 from agents.base_agent import BaseAgent
 from models.schemas import (
-    Itinerary, DayItinerary, TravelProfile, SpotList, 
+    Itinerary, DayItinerary, TravelProfile, SpotList,
     DiningList, PlanningContext
 )
 from agents.route_hotel_planning.prompts import (
@@ -19,41 +19,39 @@ from datetime import datetime, timedelta
 
 
 class RouteHotelPlanningAgent(BaseAgent):
-    """规划路线和酒店的 Agent"""
-    
+    """Agent that plans routes and hotel accommodation."""
+
     def __init__(self):
         super().__init__(
             name="Route & Hotel Planning Agent",
-            description="根据景点和餐厅推荐规划完整的日程和酒店安排"
+            description="Plans a complete day-by-day itinerary and hotel arrangement based on spot and restaurant recommendations"
         )
-    
+
     def process(self, context: PlanningContext) -> PlanningContext:
         """
-        处理景点和餐厅推荐，生成完整的行程和酒店安排
-        
+        Process spot and restaurant recommendations and generate a full itinerary.
+
         Args:
-            context: 规划上下文，需包含 TravelProfile, SpotList, DiningList
-            
+            context: planning context containing TravelProfile, SpotList, DiningList
+
         Returns:
-            包含 Itinerary 的上下文
+            context with itinerary populated
         """
         try:
             if not self.validate_input(context):
-                context.add_error("缺少必需的输入信息")
+                context.add_error("Missing required input")
                 return context
-            
+
             travel_profile = context.travel_profile
             spot_list = context.spot_list
             dining_list = context.dining_list
-            
-            # 创建每日行程
+
             days = self._create_daily_itineraries(
                 travel_profile,
                 spot_list,
                 dining_list
             )
-            
-            # 创建完整行程
+
             itinerary = Itinerary(
                 location=travel_profile.destination,
                 start_date=travel_profile.start_date,
@@ -68,24 +66,24 @@ class RouteHotelPlanningAgent(BaseAgent):
                 },
                 generated_at=datetime.now()
             )
-            
+
             context.itinerary = itinerary
-            self.log_execution(f"创建了 {len(days)} 天的行程")
-            
+            self.log_execution(f"Created {len(days)}-day itinerary")
+
         except Exception as e:
-            context.add_error(f"行程规划失败: {str(e)}")
-            self.log_execution(f"错误: {str(e)}", level="error")
-        
+            context.add_error(f"Itinerary planning failed: {str(e)}")
+            self.log_execution(f"Error: {str(e)}", level="error")
+
         return context
-    
+
     def validate_input(self, context: PlanningContext) -> bool:
-        """验证必需的输入"""
+        """Validate required input."""
         return (
             context.travel_profile is not None and
             context.spot_list is not None and
             context.dining_list is not None
         )
-    
+
     def _create_daily_itineraries(
         self,
         travel_profile: TravelProfile,
@@ -93,23 +91,22 @@ class RouteHotelPlanningAgent(BaseAgent):
         dining_list: DiningList
     ) -> List[DayItinerary]:
         """
-        为每一天创建详细的行程安排
-        
+        Create a detailed itinerary for each day.
+
         Args:
-            travel_profile: 用户旅行信息
-            spot_list: 推荐景点列表
-            dining_list: 推荐餐厅列表
-            
+            travel_profile: user travel information
+            spot_list: recommended attractions
+            dining_list: recommended restaurants
+
         Returns:
-            每日行程列表
+            list of DayItinerary objects
         """
         days = []
         current_date = travel_profile.start_date
         day_number = 1
-        
-        # 计算旅行天数
+
         num_days = (travel_profile.end_date - travel_profile.start_date).days + 1
-        
+
         while day_number <= num_days:
             day_itinerary = DayItinerary(
                 day_number=day_number,
@@ -120,9 +117,9 @@ class RouteHotelPlanningAgent(BaseAgent):
                 total_estimated_cost=0.0,
                 notes=""
             )
-            
+
             days.append(day_itinerary)
             current_date += timedelta(days=1)
             day_number += 1
-        
+
         return days

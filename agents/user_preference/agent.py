@@ -1,5 +1,5 @@
 """
-用户偏好 Agent - 收集和解析用户的旅行偏好
+User Preference Agent - collects and parses user travel preferences.
 """
 
 import json
@@ -17,69 +17,63 @@ from agents.user_preference.prompts import (
 
 
 class UserPreferenceAgent(BaseAgent):
-    """收集用户偏好信息的 Agent"""
-    
+    """Agent that collects and parses user travel preferences."""
+
     def __init__(self):
         super().__init__(
             name="User Preference Agent",
-            description="收集和解析用户的旅行偏好信息"
+            description="Collects and parses user travel preference information"
         )
         self.required_fields = [
             'destination', 'start_date', 'end_date',
             'budget', 'group_size', 'travel_style'
         ]
-    
+
     def process(self, context: PlanningContext) -> PlanningContext:
         """
-        处理用户输入并生成 TravelProfile
-        
+        Process user input and produce a TravelProfile.
+
         Args:
-            context: 规划上下文，需包含原始用户输入
-            
+            context: planning context containing raw user input in metadata
+
         Returns:
-            包含 TravelProfile 的上下文
+            context with travel_profile populated
         """
         try:
-            # 从 context.metadata 中获取用户输入
             user_input = context.metadata.get('user_input', '')
-            
+
             if not user_input:
-                context.add_error("用户输入为空")
+                context.add_error("User input is empty")
                 return context
-            
-            # 提取偏好信息
+
             preference_data = self._extract_preferences(user_input)
-            
-            # 验证必需字段
+
             missing_fields = self._validate_required_fields(preference_data)
             if missing_fields:
-                context.add_warning(f"缺少字段: {', '.join(missing_fields)}")
-            
-            # 创建 TravelProfile
+                context.add_warning(f"Missing fields: {', '.join(missing_fields)}")
+
             travel_profile = self._create_travel_profile(preference_data)
             context.travel_profile = travel_profile
-            
-            self.log_execution(f"成功解析用户偏好: {travel_profile.destination}")
-            
+
+            self.log_execution(f"Parsed user preferences: {travel_profile.destination}")
+
         except Exception as e:
-            context.add_error(f"用户偏好处理失败: {str(e)}")
-            self.log_execution(f"错误: {str(e)}", level="error")
-        
+            context.add_error(f"User preference processing failed: {str(e)}")
+            self.log_execution(f"Error: {str(e)}", level="error")
+
         return context
-    
+
     def _extract_preferences(self, user_input: str) -> Dict[str, Any]:
         """
-        从用户输入中提取偏好信息
-        
+        Extract preference information from user input.
+
         Args:
-            user_input: 用户输入文本
-            
+            user_input: raw user input text
+
         Returns:
-            提取的偏好数据字典
+            extracted preference data dict
         """
-        # 在实际实现中，这里会调用 LLM 来解析用户输入
-        # 这里展示一个模拟实现
-        
+        # In a real implementation this would call the LLM to parse user input.
         preference_data = {
             'destination': self._extract_field(user_input, 'destination'),
             'start_date': self._extract_field(user_input, 'start_date'),
@@ -93,49 +87,49 @@ class UserPreferenceAgent(BaseAgent):
             'transportation_preference': self._extract_field(user_input, 'transportation_preference'),
             'custom_notes': self._extract_field(user_input, 'custom_notes'),
         }
-        
+
         return preference_data
-    
+
     def _extract_field(self, text: str, field_name: str, default: Any = None) -> Any:
         """
-        从文本中提取指定字段
-        
+        Extract a specific field from text.
+
         Args:
-            text: 输入文本
-            field_name: 字段名称
-            default: 默认值
-            
+            text: input text
+            field_name: field to extract
+            default: fallback value
+
         Returns:
-            提取的值或默认值
+            extracted value or default
         """
-        # 这是一个简化的实现，实际应通过 LLM
+        # Simplified stub; real implementation would use LLM.
         return default
-    
+
     def _validate_required_fields(self, preference_data: Dict[str, Any]) -> list:
         """
-        验证必需字段是否存在
-        
+        Check which required fields are missing.
+
         Args:
-            preference_data: 偏好数据
-            
+            preference_data: extracted preference data
+
         Returns:
-            缺少的字段列表
+            list of missing field names
         """
         missing = []
         for field in self.required_fields:
             if not preference_data.get(field):
                 missing.append(field)
         return missing
-    
+
     def _create_travel_profile(self, preference_data: Dict[str, Any]) -> TravelProfile:
         """
-        根据提取的数据创建 TravelProfile 对象
-        
+        Build a TravelProfile from extracted data.
+
         Args:
-            preference_data: 提取的偏好数据
-            
+            preference_data: extracted preference data
+
         Returns:
-            TravelProfile 对象
+            TravelProfile object
         """
         return TravelProfile(
             destination=preference_data.get('destination', ''),

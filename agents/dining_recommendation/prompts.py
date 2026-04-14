@@ -1,64 +1,64 @@
 """
-餐饮推荐 Agent 的 Prompt 模板
+Prompt templates for the Dining Recommendation Agent.
 """
 
-SYSTEM_PROMPT = """你是一个美食推荐专家。你的任务是：
-1. 根据用户的饮食偏好和预算推荐合适的餐厅
-2. 提供餐厅的详细信息（地址、菜系、价格、评分等）
-3. 考虑用户的特殊饮食需求（过敏、素食等）
-4. 推荐不同餐类的餐厅（早餐、午餐、晚餐）
+SYSTEM_PROMPT = """You are a food and restaurant recommendation expert. Your tasks are:
+1. Recommend restaurants that match the user's dietary preferences and budget
+2. Provide detailed information for each restaurant (address, cuisine, price, rating, etc.)
+3. Account for special dietary requirements (allergies, vegetarian, etc.)
+4. Recommend options across different meal types (breakfast, lunch, dinner)
 
-重要：确保推荐的餐厅多样化且符合用户预算。"""
+Important: ensure recommendations are diverse and within the user's budget."""
 
 DINING_RECOMMENDATION_PROMPT = """
-根据用户的旅行偏好推荐合适的餐厅：
+Recommend restaurants based on the user's travel preferences:
 
-目的地：{destination}
-旅行风格：{travel_style}
-预算：{budget}
-人数：{group_size}
-停留天数：{duration_days}
-饮食限制：{dietary_restrictions}
+Destination: {destination}
+Travel style: {travel_style}
+Budget: {budget}
+Group size: {group_size}
+Duration (days): {duration_days}
+Dietary restrictions: {dietary_restrictions}
 
-请推荐10-15家餐厅，包括以下信息：
-1. 餐厅名称
-2. 菜系
-3. 地址/位置
-4. 价格区间（$/$$/$$$/$$$$）
-5. 人均消费
-6. 用户评分（1-5分）
-7. 营业时间
-8. 是否接受预订
-9. 特殊说明（适合特定饮食需求等）
+Please recommend 10-15 restaurants, each including:
+1. Name
+2. Cuisine type
+3. Address / location
+4. Price range ($ / $$ / $$$ / $$$$)
+5. Average cost per person
+6. User rating (1-5)
+7. Opening hours
+8. Whether reservations are required
+9. Special notes (suitable for specific dietary needs, etc.)
 
-请分别推荐早餐、午餐和晚餐餐厅。返回 JSON 格式的列表。
+Provide separate recommendations for breakfast, lunch, and dinner. Return a JSON list.
 """
 
 MEAL_PLAN_PROMPT = """
-为每一天的旅行规划餐饮：
+Plan dining for the following day:
 
-日期：{date}
-该天活动：{activities}
+Date: {date}
+Activities that day: {activities}
 
-请为这一天推荐合适的：
-1. 早餐地点和时间
-2. 午餐地点和时间
-3. 晚餐地点和时间
+Recommend suitable options for:
+1. Breakfast location and time
+2. Lunch location and time
+3. Dinner location and time
 
-考虑景点位置和游览时间。
+Account for attraction locations and visit duration.
 """
 
 BUDGET_DINING_PROMPT = """
-根据以下预算为用户推荐餐饮方案：
+Recommend a dining plan for the user based on the following budget:
 
-总预算：{total_budget}
-预留餐饮预算：{dining_budget}
-停留天数：{days}
-餐类型：{meals_per_day}
+Total budget: {total_budget}
+Allocated dining budget: {dining_budget}
+Duration (days): {days}
+Meals per day: {meals_per_day}
 
-请推荐一个均衡的餐饮方案，包括：
-1. 高端餐厅（每次）
-2. 中档餐厅（每次）
-3. 经济餐厅（每次）
-4. 本地小吃摊位
+Recommend a balanced plan including:
+1. High-end restaurants (per visit)
+2. Mid-range restaurants (per visit)
+3. Budget restaurants (per visit)
+4. Local street food options
 """

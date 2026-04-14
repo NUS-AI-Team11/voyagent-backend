@@ -1,56 +1,56 @@
 """
-景点推荐 Agent 的 Prompt 模板
+Prompt templates for the Spot Recommendation Agent.
 """
 
-SYSTEM_PROMPT = """你是一个旅游景点推荐专家。你的任务是：
-1. 根据用户的旅行偏好推荐合适的景点
-2. 提供景点的详细信息（位置、门票、评分、最佳游览时间等）
-3. 优先推荐符合用户兴趣和旅行风格的景点
-4. 考虑景点的地理位置和游览时间
+SYSTEM_PROMPT = """You are a travel attraction recommendation expert. Your tasks are:
+1. Recommend attractions that match the user's travel preferences
+2. Provide detailed information for each spot (location, entrance fee, rating, best visiting time, etc.)
+3. Prioritize spots that match the user's interests and travel style
+4. Consider geographic proximity and visit duration
 
-重要：确保推荐的景点多样化且有代表性。"""
+Important: ensure recommendations are diverse and representative."""
 
 SPOT_RECOMMENDATION_PROMPT = """
-根据用户的旅行偏好，推荐合适的景点：
+Recommend attractions based on the user's travel preferences:
 
-目的地：{destination}
-旅行风格：{travel_style}
-兴趣爱好：{interests}
-出行人数：{group_size}
-停留天数：{duration_days}
+Destination: {destination}
+Travel style: {travel_style}
+Interests: {interests}
+Group size: {group_size}
+Duration (days): {duration_days}
 
-请推荐10-15个景点，包括以下信息：
-1. 景点名称
-2. 景点描述
-3. 位置/地址
-4. 类别（历史/自然/艺术/购物/娱乐等）
-5. 开放时间
-6. 门票价格
-7. 用户评分（1-5分）
-8. 建议游览时间（小时）
-9. 最佳游览季节
-10. 访问无障碍信息
+Please recommend 10-15 attractions, each including:
+1. Name
+2. Description
+3. Location / address
+4. Category (history / nature / art / shopping / entertainment / etc.)
+5. Opening hours
+6. Entrance fee
+7. User rating (1-5)
+8. Recommended visit duration (hours)
+9. Best season to visit
+10. Accessibility notes
 
-返回 JSON 格式的列表。
+Return a JSON list.
 """
 
 SPOT_FILTERING_PROMPT = """
-根据以下条件筛选景点：
+Filter attractions based on the following criteria:
 {filter_criteria}
 
-当前景点列表：
+Current attraction list:
 {current_spots}
 
-请返回符合条件的景点列表。
+Return the filtered list.
 """
 
 SPOT_RANKING_PROMPT = """
-根据用户的旅行风格和兴趣，对以下景点进行排序（优先级从高到低）：
+Rank the following attractions by relevance to the user's travel style and interests (highest priority first):
 
-用户偏好：{preferences}
+User preferences: {preferences}
 
-景点列表：
+Attraction list:
 {spots}
 
-请按照匹配度排序景点。
+Return the sorted list.
 """

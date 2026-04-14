@@ -1,5 +1,5 @@
 """
-路线&酒店规划 Agent 测试
+Tests for Route & Hotel Planning Agent.
 """
 
 import pytest
@@ -10,13 +10,11 @@ from datetime import date
 
 @pytest.fixture
 def agent():
-    """创建 Agent 实例"""
     return RouteHotelPlanningAgent()
 
 
 @pytest.fixture
 def sample_context():
-    """创建示例上下文"""
     context = PlanningContext()
     context.travel_profile = TravelProfile(
         destination='Barcelona',
@@ -32,26 +30,22 @@ def sample_context():
 
 
 def test_agent_initialization(agent):
-    """测试 Agent 初始化"""
     assert agent.name == "Route & Hotel Planning Agent"
 
 
 def test_process_valid_input(agent, sample_context):
-    """测试有效输入的处理"""
     result = agent.process(sample_context)
-    
+
     assert result is not None
 
 
 def test_validate_input_success(agent, sample_context):
-    """测试输入验证成功"""
     assert agent.validate_input(sample_context) is True
 
 
 def test_validate_input_missing_spot_list(agent, sample_context):
-    """测试缺少景点列表的输入验证"""
     sample_context.spot_list = None
-    
+
     assert agent.validate_input(sample_context) is False
 
 

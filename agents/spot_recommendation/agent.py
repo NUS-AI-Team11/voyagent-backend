@@ -1,5 +1,5 @@
 """
-景点推荐 Agent - 根据用户偏好推荐景点
+Spot Recommendation Agent - recommends attractions based on user preferences.
 """
 
 from agents.base_agent import BaseAgent
@@ -15,40 +15,37 @@ from datetime import datetime
 
 
 class SpotRecommendationAgent(BaseAgent):
-    """根据用户偏好推荐景点的 Agent"""
-    
+    """Agent that recommends attractions based on user travel preferences."""
+
     def __init__(self):
         super().__init__(
             name="Spot Recommendation Agent",
-            description="根据用户旅行偏好推荐合适的景点"
+            description="Recommends attractions matching user travel preferences"
         )
-    
+
     def process(self, context: PlanningContext) -> PlanningContext:
         """
-        处理用户偏好并生成景点推荐列表
-        
+        Process user preferences and generate a spot recommendation list.
+
         Args:
-            context: 规划上下文，需包含 TravelProfile
-            
+            context: planning context containing a TravelProfile
+
         Returns:
-            包含 SpotList 的上下文
+            context with spot_list populated
         """
         try:
             if not context.travel_profile:
-                context.add_error("缺少旅行偏好信息")
+                context.add_error("Missing travel profile")
                 return context
-            
-            # 验证输入
+
             if not self.validate_input(context):
-                context.add_error("输入验证失败")
+                context.add_error("Input validation failed")
                 return context
-            
+
             travel_profile = context.travel_profile
-            
-            # 生成景点推荐列表
+
             spots = self._recommend_spots(travel_profile)
-            
-            # 创建 SpotList
+
             spot_list = SpotList(
                 spots=spots,
                 filter_criteria={
@@ -59,36 +56,30 @@ class SpotRecommendationAgent(BaseAgent):
                 total_count=len(spots),
                 generated_at=datetime.now()
             )
-            
+
             context.spot_list = spot_list
-            self.log_execution(f"推荐了 {len(spots)} 个景点")
-            
+            self.log_execution(f"Recommended {len(spots)} spots")
+
         except Exception as e:
-            context.add_error(f"景点推荐失败: {str(e)}")
-            self.log_execution(f"错误: {str(e)}", level="error")
-        
+            context.add_error(f"Spot recommendation failed: {str(e)}")
+            self.log_execution(f"Error: {str(e)}", level="error")
+
         return context
-    
+
     def validate_input(self, context: PlanningContext) -> bool:
-        """验证必需的输入"""
+        """Validate required input."""
         return context.travel_profile is not None
-    
+
     def _recommend_spots(self, travel_profile: TravelProfile) -> List[Spot]:
         """
-        根据用户偏好生成景点推荐列表
-        
+        Generate a list of recommended attractions based on user preferences.
+
         Args:
-            travel_profile: 用户旅行信息
-            
+            travel_profile: user travel information
+
         Returns:
-            推荐的景点列表
+            list of recommended Spot objects
         """
-        # 这里实现景点推荐的主要逻辑
-        # 在实际实现中，会调用 LLM 或数据库查询
-        
+        # Real implementation would call an LLM or query a database.
         spots = []
-        
-        # 模拟推荐结果
-        # 实际实现时会替换为真实的推荐逻辑
-        
         return spots

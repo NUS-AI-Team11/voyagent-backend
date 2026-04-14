@@ -1,98 +1,98 @@
 """
-路线&酒店规划 Agent 的 Prompt 模板
+Prompt templates for the Route & Hotel Planning Agent.
 """
 
-SYSTEM_PROMPT = """你是一个专业的旅行规划师。你的任务是：
-1. 根据推荐的景点和餐厅规划每日行程
-2. 优化景点访问顺序（考虑地理位置和交通）
-3. 推荐合适的酒店
-4. 为每天分配合理的时间和活动
-5. 提供交通建议
+SYSTEM_PROMPT = """You are a professional travel planner. Your tasks are:
+1. Plan a daily itinerary based on recommended attractions and restaurants
+2. Optimize the visit order for attractions (considering location and transit)
+3. Recommend suitable hotels
+4. Allocate reasonable time and activities for each day
+5. Provide transportation advice
 
-重要：确保行程既滿足用户兴趣又具有可行性。"""
+Important: ensure the itinerary is both satisfying and feasible."""
 
 ITINERARY_CREATION_PROMPT = """
-根据以下信息创建详细的日程安排：
+Create a detailed schedule based on the following information:
 
-用户信息：
-- 目的地：{destination}
-- 出发日期：{start_date}
-- 返回日期：{end_date}
-- 人数：{group_size}
-- 交通偏好：{transportation_preference}
+User information:
+- Destination: {destination}
+- Departure date: {start_date}
+- Return date: {end_date}
+- Group size: {group_size}
+- Transportation preference: {transportation_preference}
 
-推荐景点：
+Recommended attractions:
 {spots}
 
-推荐餐厅：
+Recommended restaurants:
 {restaurants}
 
-请为每一天创建详细的行程，包括：
-1. 早上活动（时间、景点、预计耗时）
-2. 午餐地点和时间
-3. 下午活动
-4. 晚餐地点和时间
-5. 晚上活动
-6. 预计该天交通成本
-7. 预计该天门票成本
+For each day create a detailed itinerary including:
+1. Morning activities (time, attraction, estimated duration)
+2. Lunch location and time
+3. Afternoon activities
+4. Dinner location and time
+5. Evening activities
+6. Estimated transportation cost for the day
+7. Estimated entrance fee cost for the day
 
-返回 JSON 格式的每日行程列表。
+Return a JSON list of daily itineraries.
 """
 
 HOTEL_RECOMMENDATION_PROMPT = """
-为用户推荐合适的酒店：
+Recommend suitable hotels for the user:
 
-目的地：{destination}
-停留天数：{nights}
-人数：{group_size}
-酒店偏好：{hotel_preference}
-预算限制：{budget}
+Destination: {destination}
+Number of nights: {nights}
+Group size: {group_size}
+Hotel preference: {hotel_preference}
+Budget: {budget}
 
-请推荐3-5家酒店，包括：
-1. 酒店名称
-2. 位置/地址
-3. 星级
-4. 价格（每晚）
-5. 评分
-6. 关键特色设施
-7. 到主要景点的距离
+Please recommend 3-5 hotels, each including:
+1. Hotel name
+2. Location / address
+3. Star rating
+4. Price per night
+5. User rating
+6. Key amenities
+7. Distance to major attractions
 
-考虑不同等级的酒店，让用户可以选择。
+Include options at different price levels.
 """
 
 ROUTE_OPTIMIZATION_PROMPT = """
-优化以下景点的访问路线：
+Optimize the visit route for the following attractions:
 
-景点列表：
+Attraction list:
 {spots}
 
-出发点：{starting_point}
-交通方式：{transportation}
+Starting point: {starting_point}
+Mode of transport: {transportation}
 
-请提供：
-1. 最优访问顺序
-2. 景点之间的预计交通时间
-3. 推荐路线说明
-4. 预计总旅行时间
+Please provide:
+1. Optimal visit order
+2. Estimated transit time between each attraction
+3. Recommended route description
+4. Estimated total travel time
 """
 
 DAILY_SCHEDULE_PROMPT = """
-为第 {day_number} 天创建详细的时间表：
+Create a detailed schedule for day {day_number}:
 
-日期：{date}
-分配的景点：{spots}
-分配的餐厅：{restaurants}
-酒店信息：{hotel}
+Date: {date}
+Assigned attractions: {spots}
+Assigned restaurants: {restaurants}
+Hotel information: {hotel}
 
-请创建分钟级别的时间表，包括：
-- 起床时间
-- 早餐时间和地点
-- 出发时间
-- 每个景点的详细访问时段
-- 午餐时间
-- 继续游览
-- 晚餐时间
-- 返回酒店时间
+Create a minute-level schedule including:
+- Wake-up time
+- Breakfast time and location
+- Departure time
+- Detailed visit windows for each attraction
+- Lunch time
+- Continued sightseeing
+- Dinner time
+- Return to hotel time
 
-确保行程合理且不过于紧凑。
+Ensure the schedule is reasonable and not overly packed.
 """

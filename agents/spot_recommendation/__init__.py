@@ -1,5 +1,5 @@
 """
-spot_recommendation 包 __init__.py
+spot_recommendation package
 """
 
 from agents.spot_recommendation.agent import SpotRecommendationAgent

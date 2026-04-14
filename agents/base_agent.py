@@ -1,5 +1,5 @@
 """
-Agent 抽象基类
+Abstract base class for all agents.
 """
 
 from abc import ABC, abstractmethod
@@ -11,59 +11,59 @@ from models.schemas import PlanningContext
 
 
 class BaseAgent(ABC):
-    """所有 Agent 的抽象基类"""
-    
+    """Abstract base class for all agents."""
+
     def __init__(self, name: str, description: str = ""):
         """
-        初始化 Agent
-        
+        Initialize the agent.
+
         Args:
-            name: Agent 名称
-            description: Agent 描述
+            name: agent name
+            description: agent description
         """
         self.name = name
         self.description = description
         self.logger = logging.getLogger(self.__class__.__name__)
         self.created_at = datetime.now()
-    
+
     @abstractmethod
     def process(self, context: PlanningContext) -> PlanningContext:
         """
-        处理规划上下文的主方法
-        
+        Main method for processing the planning context.
+
         Args:
-            context: 共享的规划上下文
-            
+            context: shared planning context
+
         Returns:
-            更新后的规划上下文
+            updated planning context
         """
         pass
-    
+
     def validate_input(self, context: PlanningContext) -> bool:
         """
-        验证输入数据的有效性
-        
+        Validate input data.
+
         Args:
-            context: 规划上下文
-            
+            context: planning context
+
         Returns:
-            是否有效
+            True if valid
         """
         return True
-    
+
     def log_execution(self, message: str, level: str = "info") -> None:
         """
-        记录执行日志
-        
+        Log an execution message.
+
         Args:
-            message: 日志信息
-            level: 日志级别
+            message: log message
+            level: log level
         """
         log_func = getattr(self.logger, level.lower(), self.logger.info)
         log_func(f"[{self.name}] {message}")
-    
+
     def __str__(self) -> str:
         return f"{self.name} - {self.description}"
-    
+
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}: {self.name}>"

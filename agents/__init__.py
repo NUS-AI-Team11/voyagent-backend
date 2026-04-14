@@ -1,5 +1,5 @@
 """
-agents 包 __init__.py
+agents package
 """
 
 from agents.base_agent import BaseAgent

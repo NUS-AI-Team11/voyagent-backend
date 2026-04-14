@@ -1,5 +1,5 @@
 """
-根 __init__.py 文件
+VoyageAgent root package
 """
 
 __version__ = "0.1.0"

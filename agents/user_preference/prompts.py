@@ -1,48 +1,48 @@
 """
-用户偏好 Agent 的 Prompt 模板
+Prompt templates for the User Preference Agent.
 """
 
-SYSTEM_PROMPT = """你是一个旅行偏好收集专家。你的任务是：
-1. 理解用户的旅行需求
-2. 提取关键信息（目的地、日期、预算、人数等）
-3. 识别旅行风格和兴趣爱好
-4. 记录特殊需求（饮食限制、无障碍需求等）
+SYSTEM_PROMPT = """You are a travel preference collection specialist. Your tasks are:
+1. Understand the user's travel requirements
+2. Extract key information (destination, dates, budget, group size, etc.)
+3. Identify travel style and interests
+4. Record special requirements (dietary restrictions, accessibility needs, etc.)
 
-重要：确保所有必需信息都被收集。"""
+Important: ensure all required information is collected."""
 
 USER_PREFERENCE_EXTRACTION_PROMPT = """
-基于用户提供的以下信息，请提取并整理成结构化的旅行偏好：
+Based on the following user input, extract and structure the travel preferences:
 
-用户输入：
+User input:
 {user_input}
 
-请提取以下信息：
-1. 目的地（destination）
-2. 出发日期（start_date）
-3. 返回日期（end_date）
-4. 总预算（budget）
-5. 出行人数（group_size）
-6. 旅行风格（travel_style）：冒险/放松/文化/购物/美食/家庭等
-7. 兴趣爱好（interests）：列表形式
-8. 饮食限制（dietary_restrictions）：如有
-9. 酒店偏好（hotel_preference）：豪华/舒适/经济等
-10. 交通偏好（transportation_preference）：自驾/公共交通/飞行等
-11. 其他特殊需求
+Please extract:
+1. Destination
+2. Departure date (start_date)
+3. Return date (end_date)
+4. Total budget
+5. Group size
+6. Travel style: adventure / relaxation / culture / shopping / food / family / etc.
+7. Interests (list)
+8. Dietary restrictions (if any)
+9. Hotel preference: luxury / comfortable / budget / etc.
+10. Transportation preference: self-drive / public transit / flights / etc.
+11. Any other special requirements
 
-返回 JSON 格式的结构化数据。
+Return structured data in JSON format.
 """
 
 CLARIFICATION_PROMPT = """
-用户的以下信息不完整，请询问用户以下问题：
+The following information is incomplete. Please ask the user for the missing details:
 {missing_fields}
 
-请用友好和专业的方式提出。
+Ask in a friendly and professional manner.
 """
 
 PROFILE_SUMMARY_PROMPT = """
-请总结用户的旅行偏好并请其确认：
+Please summarize the user's travel preferences and ask them to confirm:
 
 {profile_summary}
 
-确认无误吗？
+Does this look correct?
 """

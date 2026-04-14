@@ -1,5 +1,5 @@
 """
-用户偏好 Agent 测试
+Tests for User Preference Agent.
 """
 
 import pytest
@@ -10,63 +10,55 @@ from agents.user_preference.agent import UserPreferenceAgent
 
 @pytest.fixture
 def agent():
-    """创建 Agent 实例"""
     return UserPreferenceAgent()
 
 
 @pytest.fixture
 def sample_context():
-    """创建示例上下文"""
     context = PlanningContext()
     context.metadata['user_input'] = """
-    我想去巴黎，5月15日出发，5月22日回来。
-    预算5000美元，4个人。
-    我们喜欢文化和美食。
+    I want to visit Paris, departing May 15 and returning May 22.
+    Budget $5000 for 4 people.
+    We enjoy culture and food.
     """
     return context
 
 
 def test_agent_initialization(agent):
-    """测试 Agent 初始化"""
     assert agent.name == "User Preference Agent"
-    assert agent.description == "收集和解析用户的旅行偏好信息"
+    assert agent.description == "Collects and parses user travel preference information"
 
 
 def test_process_valid_input(agent, sample_context):
-    """测试有效输入的处理"""
     result = agent.process(sample_context)
-    
-    # 检查上下文是否被更新
+
     assert result is not None
-    # 如果实现完整，应该有 travel_profile
+    # When fully implemented, travel_profile should be populated.
     # assert result.travel_profile is not None
 
 
 def test_process_empty_input(agent):
-    """测试空输入的处理"""
     context = PlanningContext()
     context.metadata['user_input'] = ''
-    
+
     result = agent.process(context)
-    
+
     assert len(result.errors) > 0
 
 
 def test_validate_required_fields(agent):
-    """测试必需字段的验证"""
     incomplete_data = {
         'destination': 'Paris',
-        # 缺少其他必需字段
+        # other required fields are missing
     }
-    
+
     missing = agent._validate_required_fields(incomplete_data)
-    
+
     assert len(missing) > 0
     assert 'budget' in missing
 
 
 def test_create_travel_profile(agent):
-    """测试旅行档案的创建"""
     data = {
         'destination': 'Tokyo',
         'start_date': date(2024, 5, 15),
@@ -76,9 +68,9 @@ def test_create_travel_profile(agent):
         'travel_style': 'adventure',
         'interests': ['temples', 'food'],
     }
-    
+
     profile = agent._create_travel_profile(data)
-    
+
     assert profile.destination == 'Tokyo'
     assert profile.budget == 3000
     assert profile.group_size == 2
