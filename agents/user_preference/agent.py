@@ -4,7 +4,7 @@ User Preference Agent - collects and parses user travel preferences.
 
 import json
 from typing import Dict, Any
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from agents.base_agent import BaseAgent
 from models.schemas import TravelProfile, PlanningContext
@@ -51,6 +51,10 @@ class UserPreferenceAgent(BaseAgent):
             missing_fields = self._validate_required_fields(preference_data)
             if missing_fields:
                 context.add_warning(f"Missing fields: {', '.join(missing_fields)}")
+                context.add_error(
+                    f"Unable to build travel profile because required fields are missing: {', '.join(missing_fields)}"
+                )
+                return context
 
             travel_profile = self._create_travel_profile(preference_data)
             context.travel_profile = travel_profile
@@ -72,38 +76,41 @@ class UserPreferenceAgent(BaseAgent):
 
         Returns:
             extracted preference data dict
+
+        TODO:
+            Replace the mock data below with a real LLM call.
+            Steps:
+              1. Build the prompt using USER_PREFERENCE_EXTRACTION_PROMPT from prompts.py
+              2. Call your LLM client with SYSTEM_PROMPT + the formatted prompt
+              3. Parse the JSON response the LLM returns
+              4. Return the parsed dict — the keys must match the ones below
+
+            The LLM should return a JSON object with these fields:
+              destination, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD),
+              budget (number), group_size (integer), travel_style (string),
+              interests (list), dietary_restrictions (list),
+              hotel_preference, transportation_preference, custom_notes
         """
-        # In a real implementation this would call the LLM to parse user input.
+        # ---------------------------------------------------------------------------
+        # MOCK DATA — hardcoded so the full pipeline can run end-to-end for testing.
+        # Delete this block and replace it with your LLM call when you implement the
+        # real agent logic.
+        # ---------------------------------------------------------------------------
         preference_data = {
-            'destination': self._extract_field(user_input, 'destination'),
-            'start_date': self._extract_field(user_input, 'start_date'),
-            'end_date': self._extract_field(user_input, 'end_date'),
-            'budget': self._extract_field(user_input, 'budget'),
-            'group_size': self._extract_field(user_input, 'group_size'),
-            'travel_style': self._extract_field(user_input, 'travel_style'),
-            'interests': self._extract_field(user_input, 'interests', default=[]),
-            'dietary_restrictions': self._extract_field(user_input, 'dietary_restrictions', default=[]),
-            'hotel_preference': self._extract_field(user_input, 'hotel_preference'),
-            'transportation_preference': self._extract_field(user_input, 'transportation_preference'),
-            'custom_notes': self._extract_field(user_input, 'custom_notes'),
+            'destination': 'Tokyo',
+            'start_date': date(2025, 5, 1),
+            'end_date': date(2025, 5, 7),
+            'budget': 5000.0,
+            'group_size': 2,
+            'travel_style': 'culture',
+            'interests': ['history', 'food', 'temples'],
+            'dietary_restrictions': [],
+            'hotel_preference': 'mid-range',
+            'transportation_preference': 'public_transit',
+            'custom_notes': user_input,
         }
-
+        # ---------------------------------------------------------------------------
         return preference_data
-
-    def _extract_field(self, text: str, field_name: str, default: Any = None) -> Any:
-        """
-        Extract a specific field from text.
-
-        Args:
-            text: input text
-            field_name: field to extract
-            default: fallback value
-
-        Returns:
-            extracted value or default
-        """
-        # Simplified stub; real implementation would use LLM.
-        return default
 
     def _validate_required_fields(self, preference_data: Dict[str, Any]) -> list:
         """
@@ -132,15 +139,33 @@ class UserPreferenceAgent(BaseAgent):
             TravelProfile object
         """
         return TravelProfile(
-            destination=preference_data.get('destination', ''),
+            destination=str(preference_data.get('destination') or ''),
             start_date=preference_data.get('start_date') or date.today(),
             end_date=preference_data.get('end_date') or date.today(),
-            budget=float(preference_data.get('budget', 0)),
-            group_size=int(preference_data.get('group_size', 1)),
-            travel_style=preference_data.get('travel_style', ''),
+            budget=self._safe_float(preference_data.get('budget'), default=0.0),
+            group_size=self._safe_int(preference_data.get('group_size'), default=1),
+            travel_style=str(preference_data.get('travel_style') or ''),
             interests=preference_data.get('interests', []),
             dietary_restrictions=preference_data.get('dietary_restrictions', []),
             hotel_preference=preference_data.get('hotel_preference'),
             transportation_preference=preference_data.get('transportation_preference'),
             custom_notes=preference_data.get('custom_notes'),
         )
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Convert a value to float with a safe fallback."""
+        if value is None or value == "":
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_int(self, value: Any, default: int = 1) -> int:
+        """Convert a value to int with a safe fallback."""
+        if value is None or value == "":
+            return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default

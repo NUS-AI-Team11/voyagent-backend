@@ -80,7 +80,46 @@ class DiningRecommendationAgent(BaseAgent):
 
         Returns:
             list of recommended Restaurant objects
+
+        TODO:
+            Replace the mock data below with a real LLM call.
+            Steps:
+              1. Format DINING_RECOMMENDATION_PROMPT with travel_profile fields
+                 (destination, dietary_restrictions, budget, group_size, travel_style)
+              2. Call your LLM client with SYSTEM_PROMPT + the formatted prompt
+              3. Parse the JSON list the LLM returns
+              4. Convert each item into a Restaurant object and return the list
+
+            Each Restaurant needs: name, cuisine_type, location, price_range,
+            rating, average_cost_per_person, opening_hours.
+            price_range uses: $ / $$ / $$$ / $$$$
         """
-        # Real implementation would call an LLM or query a database.
-        restaurants = []
+        # ---------------------------------------------------------------------------
+        # MOCK DATA — two placeholder restaurants so the pipeline can run end-to-end.
+        # Delete this block and replace it with your LLM call when you implement the
+        # real agent logic.
+        # ---------------------------------------------------------------------------
+        restaurants = [
+            Restaurant(
+                name="Ichiran Ramen Shibuya",
+                cuisine_type="Japanese Ramen",
+                location="Dogenzaka, Shibuya City, Tokyo",
+                price_range="$$",
+                rating=4.5,
+                average_cost_per_person=15.0,
+                opening_hours="10:00 - 02:00",
+                reservations_needed=False,
+            ),
+            Restaurant(
+                name="Tsukiji Outer Market",
+                cuisine_type="Seafood / Street Food",
+                location="Tsukiji, Chuo City, Tokyo",
+                price_range="$$",
+                rating=4.6,
+                average_cost_per_person=20.0,
+                opening_hours="05:00 - 14:00",
+                reservations_needed=False,
+            ),
+        ]
+        # ---------------------------------------------------------------------------
         return restaurants

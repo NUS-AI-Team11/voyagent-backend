@@ -79,7 +79,48 @@ class SpotRecommendationAgent(BaseAgent):
 
         Returns:
             list of recommended Spot objects
+
+        TODO:
+            Replace the mock data below with a real LLM call.
+            Steps:
+              1. Format SPOT_RECOMMENDATION_PROMPT with travel_profile fields
+                 (destination, travel_style, interests, group_size, start_date, end_date)
+              2. Call your LLM client with SYSTEM_PROMPT + the formatted prompt
+              3. Parse the JSON list the LLM returns
+              4. Convert each item into a Spot object and return the list
+
+            Each Spot needs: name, description, location, category,
+            opening_hours, entrance_fee, rating, duration_hours.
+            Optional: best_season, accessibility_notes.
         """
-        # Real implementation would call an LLM or query a database.
-        spots = []
+        # ---------------------------------------------------------------------------
+        # MOCK DATA — one placeholder spot so the pipeline can run end-to-end.
+        # Delete this block and replace it with your LLM call when you implement the
+        # real agent logic.
+        # ---------------------------------------------------------------------------
+        spots = [
+            Spot(
+                name="Senso-ji Temple",
+                description="Tokyo's oldest Buddhist temple in Asakusa.",
+                location="2-3-1 Asakusa, Taito City, Tokyo",
+                category="culture",
+                opening_hours="06:00 - 17:00",
+                entrance_fee=0.0,
+                rating=4.8,
+                duration_hours=2.0,
+                best_season="spring",
+                accessibility_notes="Wheelchair accessible main hall",
+            ),
+            Spot(
+                name="Shinjuku Gyoen National Garden",
+                description="Large park famous for cherry blossoms.",
+                location="11 Naito-cho, Shinjuku City, Tokyo",
+                category="nature",
+                opening_hours="09:00 - 16:30",
+                entrance_fee=5.0,
+                rating=4.7,
+                duration_hours=2.5,
+            ),
+        ]
+        # ---------------------------------------------------------------------------
         return spots

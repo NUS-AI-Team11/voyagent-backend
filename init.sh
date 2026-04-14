@@ -1,6 +1,8 @@
 #!/bin/bash
 # VoyageAgent project initialization script
 
+set -euo pipefail
+
 echo "============================================================"
 echo "      VoyageAgent - Intelligent Travel Planning System      "
 echo "============================================================"
@@ -15,6 +17,13 @@ fi
 
 PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
 echo "Found Python $PYTHON_VERSION"
+
+PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info[0])')
+PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info[1])')
+if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 13 ]; then
+    echo "Warning: Python $PYTHON_VERSION detected."
+    echo "This project is best tested on Python 3.11-3.12 for maximum dependency compatibility."
+fi
 
 # Create virtual environment
 echo ""
@@ -35,13 +44,13 @@ echo "Virtual environment activated."
 # Upgrade pip
 echo ""
 echo "Upgrading pip..."
-pip install --upgrade pip > /dev/null 2>&1
+pip install --upgrade pip
 echo "pip upgraded."
 
 # Install dependencies
 echo ""
 echo "Installing project dependencies..."
-pip install -r requirements.txt > /dev/null 2>&1
+pip install -r requirements.txt
 echo "Dependencies installed."
 
 # Configure environment variables
@@ -55,10 +64,10 @@ else
     echo "   Please edit .env and add your API keys."
 fi
 
-# Run framework tests
+# Run tests
 echo ""
-echo "Running framework integrity tests..."
-python test_framework.py
+echo "Running test suite..."
+pytest tests/ -q
 
 echo ""
 echo "============================================================"
@@ -73,6 +82,6 @@ echo ""
 echo "Learn more:"
 echo "   - Architecture: docs/architecture.md"
 echo "   - Project docs: README.md"
-echo "   - Framework report: FRAMEWORK_REPORT.md"
+echo "   - Quick start: docs/QUICK_START.md"
 echo ""
 echo "Happy coding!"

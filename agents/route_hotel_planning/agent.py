@@ -107,16 +107,44 @@ class RouteHotelPlanningAgent(BaseAgent):
 
         num_days = (travel_profile.end_date - travel_profile.start_date).days + 1
 
+        # TODO:
+        #   Replace the skeleton loop below with real itinerary generation.
+        #   Steps:
+        #     1. Distribute spot_list.spots across the days (e.g. 2-3 spots per day)
+        #     2. For each day assign meals from dining_list.restaurants
+        #     3. Call LLM with ITINERARY_CREATION_PROMPT to build the activities list
+        #        and with HOTEL_RECOMMENDATION_PROMPT to fill accommodation
+        #     4. Populate total_estimated_cost by summing entrance fees + meal costs
+        #
+        #   Each activity dict should look like:
+        #     {"time": "09:00", "name": "...", "location": "...", "cost": 0.0, "duration_hours": 2.0}
+        #   accommodation dict should look like:
+        #     {"name": "...", "address": "...", "cost_per_night": 100.0, "rating": 4.2}
+
         while day_number <= num_days:
+            # -----------------------------------------------------------------------
+            # MOCK DATA — empty skeleton so the pipeline can run end-to-end.
+            # Fill in activities, meals, and accommodation when you implement the
+            # real agent logic.
+            # -----------------------------------------------------------------------
             day_itinerary = DayItinerary(
                 day_number=day_number,
                 date=current_date,
-                activities=[],
-                meals={},
-                accommodation=None,
+                activities=[
+                    # Placeholder — replace with real scheduled activities
+                    {"time": "09:00", "name": f"Day {day_number} Morning Activity", "location": "TBD", "cost": 0.0}
+                ],
+                meals={
+                    # Placeholder — replace with real restaurant picks from dining_list
+                    "breakfast": "TBD",
+                    "lunch": "TBD",
+                    "dinner": "TBD",
+                },
+                accommodation=None,   # Placeholder — replace with hotel from LLM
                 total_estimated_cost=0.0,
-                notes=""
+                notes="Placeholder itinerary — to be replaced by real LLM output"
             )
+            # -----------------------------------------------------------------------
 
             days.append(day_itinerary)
             current_date += timedelta(days=1)

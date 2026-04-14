@@ -1,194 +1,102 @@
 # VoyageAgent
 
-A multi-agent travel planning backend. Uses a pipeline of specialized LLM agents to generate a complete, personalized travel handbook from user input.
-
-## Features
-
-- Multi-agent architecture: 5 dedicated agents, each responsible for a distinct planning stage
-- Data-driven: complete data models enabling seamless inter-agent collaboration
-- Extensible design: easy to add new agents or extend existing ones
-- End-to-end workflow: fully automated from user input to final handbook
-- Test coverage: each agent has dedicated unit tests
+A multi-agent travel planning backend. Processes free-form user input through a pipeline of 5 specialized LLM agents and produces a complete, personalized travel handbook.
 
 ## Architecture
 
 ```
-User Input
-   |
-User Preference Agent      -> extracts user preferences
-   |
-Spot Recommendation Agent  -> recommends attractions
-   |
-Dining Recommendation Agent -> recommends restaurants
-   |
-Route & Hotel Planning Agent -> plans itinerary
-   |
-Cost Optimization Agent    -> optimizes costs
-   |
-Final Travel Handbook
+User Input (free-form text)
+        |
+[1] User Preference Agent       -> TravelProfile
+        |
+[2] Spot Recommendation Agent   -> SpotList
+        |
+[3] Dining Recommendation Agent -> DiningList
+        |
+[4] Route & Hotel Planning Agent -> Itinerary
+        |
+[5] Cost Optimization Agent     -> FinalHandbook
 ```
+
+All agents share a single `PlanningContext` object. Each agent reads its inputs from the context and writes its output back. See [docs/architecture.md](docs/architecture.md) for full details.
+
+## Quick Start
+
+```bash
+# 1. Setup
+bash init.sh          # macOS/Linux
+init.bat              # Windows
+
+# 2. Configure
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY
+
+# 3. Run
+python main.py
+
+# 4. Test
+pytest tests/ -v
+```
+
+See [docs/QUICK_START.md](docs/QUICK_START.md) for step-by-step instructions and troubleshooting.
 
 ## Directory Structure
 
 ```
 voyagent-backend/
-├── models/
-│   └── schemas.py
 ├── agents/
-│   ├── base_agent.py
-│   ├── user_preference/
+│   ├── base_agent.py           shared base class (do not modify)
+│   ├── user_preference/        agent.py + prompts.py
 │   ├── spot_recommendation/
 │   ├── dining_recommendation/
 │   ├── route_hotel_planning/
 │   └── cost_optimization/
+├── models/
+│   └── schemas.py              shared data models (do not modify)
 ├── orchestrator/
-│   └── workflow.py
+│   └── workflow.py             pipeline runner (do not modify)
 ├── tests/
-├── .github/workflows/
 ├── docs/
-├── requirements.txt
+│   ├── architecture.md
+│   └── QUICK_START.md
 ├── .env.example
-└── README.md
+└── requirements.txt
 ```
 
-## Quick Start
+## Implementing an Agent
 
-```bash
-# Clone the repo
-git clone <repo-url>
-cd voyagent-backend
+Each agent has one stub method with a `# TODO:` block. Fill in that method:
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
-# or
-venv\Scripts\activate     # Windows
+1. Format the prompt from `prompts.py` using fields from `context.travel_profile` (or other context fields)
+2. Call your LLM client
+3. Parse the response and return the appropriate schema object
 
-# Install dependencies
-pip install -r requirements.txt
+The mock data already in each stub keeps the full pipeline runnable until real logic is added. Delete it once your LLM call works.
 
-# Configure environment
-cp .env.example .env
-# Edit .env and add your API keys
-```
-
-## Running
-
-```python
-from orchestrator.workflow import TravelPlanningWorkflow
-
-workflow = TravelPlanningWorkflow()
-
-user_input = """
-I want to visit Paris, departing May 15 and returning May 22.
-Budget $5000 for 4 people.
-We enjoy culture and food.
-"""
-
-context = workflow.run(user_input)
-final_handbook = context.final_handbook
-print(f"Handbook: {final_handbook.title}")
-print(f"Total cost: ${final_handbook.cost_breakdown.total}")
-```
-
-## Team
-
-| Member | Module | Branch |
-|--------|--------|--------|
-| Member 1 | User Preference Agent | feature/agent-user-preference |
-| Member 2 | Spot Recommendation Agent | feature/agent-spot |
-| Member 3 | Dining Recommendation Agent | feature/agent-dining |
-| Member 4 | Route & Hotel Planning Agent | feature/agent-route-hotel |
-| Member 5 | Cost Optimization Agent | feature/agent-cost |
-| Team Lead | Orchestrator + Schemas | - |
+Do not modify `base_agent.py`, `orchestrator/workflow.py`, or `models/schemas.py`.
 
 ## Testing
 
 ```bash
-# Run all tests
-pytest tests/ -v
-
-# Run a specific test file
-pytest tests/test_user_preference.py -v
-
-# Generate coverage report
+pytest tests/ -v                        # all 21 tests
+pytest tests/test_<agent_name>.py -v   # one agent
 pytest tests/ --cov=. --cov-report=html
 ```
 
-## Agents
+## Team
 
-### User Preference Agent
-Extracts travel preference information (destination, budget, dates, group size, etc.)
-
-### Spot Recommendation Agent
-Recommends attractions matching user preferences, including ratings and entrance fees.
-
-### Dining Recommendation Agent
-Recommends restaurants matching dietary preferences and budget.
-
-### Route & Hotel Planning Agent
-Plans a detailed day-by-day itinerary and hotel arrangement.
-
-### Cost Optimization Agent
-Analyzes costs, provides optimization suggestions, and generates the final travel handbook.
-
-## Git Workflow
-
-```bash
-# Create a feature branch
-git checkout -b feature/agent-xxx
-
-# Develop and commit
-git add .
-git commit -m "feat: implement xxx"
-
-# Push to remote
-git push origin feature/agent-xxx
-
-# Open a PR to dev branch
-# Merge to main after review
-```
-
-## Configuration
-
-See `.env.example` for required environment variables:
-
-```env
-OPENAI_API_KEY=your_key
-OPENAI_MODEL=gpt-4
-LOG_LEVEL=INFO
-DATABASE_URL=sqlite:///./data/voyagent.db
-```
-
-## Documentation
-
-See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation.
-
-## Development Notes
-
-- Each agent lives under `agents/<agent_name>/`
-- Each agent contains `agent.py` (implementation) and `prompts.py` (LLM prompts)
-- All schemas are defined in `models/schemas.py`
-- Workflow logic is in `orchestrator/workflow.py`
+| Member | Agent | Branch |
+|--------|-------|--------|
+| Member 1 | User Preference | `feature/agent-user-preference` |
+| Member 2 | Spot Recommendation | `feature/agent-spot` |
+| Member 3 | Dining Recommendation | `feature/agent-dining` |
+| Member 4 | Route & Hotel Planning | `feature/agent-route-hotel` |
+| Member 5 | Cost Optimization | `feature/agent-cost` |
 
 ## CI/CD
 
-GitHub Actions runs tests automatically on push. Config: `.github/workflows/ci.yml`
+GitHub Actions runs `pytest tests/ -v` on every push. Config: `.github/workflows/ci.yml`
 
 ## License
 
 MIT License
-
-## Contributing
-
-1. Fork this repo
-2. Create a feature branch (`git checkout -b feature/xxx`)
-3. Commit your changes (`git commit -m 'Add xxx'`)
-4. Push to the branch (`git push origin feature/xxx`)
-5. Open a Pull Request
-
-## Contact
-
-- Issue reports: GitHub Issues
-- Discussion: GitHub Discussions
-- Email: team@voyagent.com

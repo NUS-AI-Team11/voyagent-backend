@@ -3,7 +3,9 @@ Agent orchestrator - main business logic for the planning pipeline.
 """
 
 import logging
-from typing import Dict, Any
+import time
+from datetime import datetime
+from typing import Dict, Any, List, Tuple
 
 from models.schemas import PlanningContext
 from agents.user_preference.agent import UserPreferenceAgent
@@ -19,13 +21,15 @@ logger = logging.getLogger(__name__)
 class TravelPlanningWorkflow:
     """End-to-end travel planning workflow."""
 
-    def __init__(self):
+    def __init__(self, fail_fast: bool = True, print_summary: bool = True):
         """Initialize all agents."""
         self.user_preference_agent = UserPreferenceAgent()
         self.spot_recommendation_agent = SpotRecommendationAgent()
         self.dining_recommendation_agent = DiningRecommendationAgent()
         self.route_hotel_planning_agent = RouteHotelPlanningAgent()
         self.cost_optimization_agent = CostOptimizationAgent()
+        self.fail_fast = fail_fast
+        self.print_summary = print_summary
 
         self.agents = [
             self.user_preference_agent,
@@ -33,6 +37,14 @@ class TravelPlanningWorkflow:
             self.dining_recommendation_agent,
             self.route_hotel_planning_agent,
             self.cost_optimization_agent,
+        ]
+
+        self.steps: List[Tuple[str, Any, str, bool]] = [
+            ("User Preference", self.user_preference_agent, "travel_profile", True),
+            ("Spot Recommendation", self.spot_recommendation_agent, "spot_list", True),
+            ("Dining Recommendation", self.dining_recommendation_agent, "dining_list", True),
+            ("Route & Hotel Planning", self.route_hotel_planning_agent, "itinerary", True),
+            ("Cost Optimization", self.cost_optimization_agent, "final_handbook", True),
         ]
 
         logger.info("Travel planning workflow initialized with 5 agents.")
@@ -47,50 +59,74 @@ class TravelPlanningWorkflow:
         Returns:
             PlanningContext containing the complete planning result
         """
+        workflow_start = time.perf_counter()
         context = PlanningContext()
-        context.metadata['user_input'] = user_input
+        context.metadata["user_input"] = user_input
+        context.metadata["workflow_started_at"] = datetime.now().isoformat()
+        context.metadata["workflow_steps"] = []
 
         logger.info("=" * 50)
         logger.info("Starting travel planning workflow")
         logger.info("=" * 50)
 
         try:
-            logger.info("\n[Step 1] Running User Preference Agent...")
-            context = self.user_preference_agent.process(context)
-            if not context.travel_profile:
-                logger.error("Failed to parse user preferences. Cannot continue.")
-                return context
-            logger.info(f"Done: {context.travel_profile.destination}")
+            for index, (label, agent, output_field, required) in enumerate(self.steps, start=1):
+                if self.fail_fast and context.errors:
+                    logger.error("Stopping workflow due to previous errors.")
+                    break
 
-            logger.info("\n[Step 2] Running Spot Recommendation Agent...")
-            context = self.spot_recommendation_agent.process(context)
-            if context.spot_list:
-                logger.info(f"Done: recommended {context.spot_list.total_count} spots")
-
-            logger.info("\n[Step 3] Running Dining Recommendation Agent...")
-            context = self.dining_recommendation_agent.process(context)
-            if context.dining_list:
-                logger.info(f"Done: recommended {context.dining_list.total_count} restaurants")
-
-            logger.info("\n[Step 4] Running Route & Hotel Planning Agent...")
-            context = self.route_hotel_planning_agent.process(context)
-            if context.itinerary:
-                logger.info(f"Done: generated {len(context.itinerary.days)}-day itinerary")
-
-            logger.info("\n[Step 5] Running Cost Optimization Agent...")
-            context = self.cost_optimization_agent.process(context)
-            if context.final_handbook:
-                logger.info("Done: final handbook generated")
-
-            self._print_summary(context)
+                logger.info(f"\n[Step {index}] Running {label} Agent...")
+                context = self._run_step(context, agent, output_field, required)
 
         except Exception as e:
             context.add_error(f"Workflow execution failed: {str(e)}")
             logger.error(f"Workflow error: {str(e)}", exc_info=True)
 
+        elapsed_ms = round((time.perf_counter() - workflow_start) * 1000, 2)
+        context.metadata["workflow_elapsed_ms"] = elapsed_ms
+        context.metadata["workflow_finished_at"] = datetime.now().isoformat()
+
         logger.info("\n" + "=" * 50)
         logger.info("Travel planning workflow complete")
+        logger.info(f"Elapsed time: {elapsed_ms} ms")
         logger.info("=" * 50)
+
+        if self.print_summary:
+            self._print_summary(context)
+
+        return context
+
+    def _run_step(self, context: PlanningContext, agent: Any, output_field: str, required: bool) -> PlanningContext:
+        """Execute one workflow step and validate its expected output."""
+        prev_error_count = len(context.errors)
+
+        if hasattr(agent, "execute"):
+            context = agent.execute(context)
+        else:
+            context = agent.process(context)
+
+        step_result = {
+            "agent": agent.name,
+            "output_field": output_field,
+            "has_output": getattr(context, output_field) is not None,
+            "new_errors": len(context.errors) - prev_error_count,
+        }
+        context.metadata["workflow_steps"].append(step_result)
+
+        if required and getattr(context, output_field) is None:
+            msg = f"{agent.name}: expected output '{output_field}' is missing"
+            context.add_error(msg)
+            logger.error(msg)
+            return context
+
+        if step_result["new_errors"] > 0:
+            logger.error(
+                "%s completed with %s new error(s)",
+                agent.name,
+                step_result["new_errors"],
+            )
+        else:
+            logger.info("Done: %s", agent.name)
 
         return context
 
@@ -123,6 +159,9 @@ class TravelPlanningWorkflow:
                 for rec in handbook.optimization_recommendations[:3]:
                     print(f"   - {rec.category}: {rec.suggestion}")
                     print(f"     Potential savings: ${rec.potential_savings:.2f}")
+
+        if context.metadata.get("workflow_elapsed_ms") is not None:
+            print(f"\nWorkflow elapsed: {context.metadata['workflow_elapsed_ms']} ms")
 
         print("\n" + "=" * 60 + "\n")
 

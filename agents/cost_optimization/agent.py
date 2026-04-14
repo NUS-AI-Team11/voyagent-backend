@@ -94,13 +94,35 @@ class CostOptimizationAgent(BaseAgent):
 
         Returns:
             CostBreakdown object
+
+        TODO:
+            Replace the mock data below with real cost analysis.
+            Steps:
+              1. Loop through itinerary.days
+              2. For each day, read activity costs from day.activities (each dict has a "cost" key)
+              3. Read accommodation cost from day.accommodation["cost_per_night"] if present
+              4. Optionally call LLM with COST_ANALYSIS_PROMPT for a more detailed breakdown
+              5. Sum up by category and populate a real CostBreakdown object
+
+            CostBreakdown fields: accommodation, transportation, dining,
+            attractions, shopping, miscellaneous, contingency (all floats).
+            cost_breakdown.total is computed automatically as the sum of all fields.
         """
-        cost_breakdown = CostBreakdown()
-
-        for day in itinerary.days:
-            # Extract cost data from daily activities.
-            pass
-
+        # ---------------------------------------------------------------------------
+        # MOCK DATA — placeholder costs so the pipeline produces a non-empty handbook.
+        # Delete this block and replace it with real cost aggregation logic when you
+        # implement the real agent logic.
+        # ---------------------------------------------------------------------------
+        cost_breakdown = CostBreakdown(
+            accommodation=700.0,
+            transportation=200.0,
+            dining=420.0,
+            attractions=150.0,
+            shopping=200.0,
+            miscellaneous=80.0,
+            contingency=100.0,
+        )
+        # ---------------------------------------------------------------------------
         return cost_breakdown
 
     def _generate_recommendations(

@@ -6,55 +6,99 @@ VoyageAgent is a multi-agent travel planning backend. The system processes user 
 
 ## Agent Pipeline
 
-1. User Preference Agent
-2. Spot Recommendation Agent
-3. Dining Recommendation Agent
-4. Route and Hotel Planning Agent
-5. Cost Optimization Agent
+```
+User Input (free-form text)
+        |
+[1] User Preference Agent       -> TravelProfile
+        |
+[2] Spot Recommendation Agent   -> SpotList
+        |
+[3] Dining Recommendation Agent -> DiningList
+        |
+[4] Route & Hotel Planning Agent -> Itinerary
+        |
+[5] Cost Optimization Agent     -> FinalHandbook
+```
 
-Each step reads and updates a shared `PlanningContext` object.
+Each step reads from and writes to a shared `PlanningContext` object. If a step produces an error, the workflow stops by default (`fail_fast=True`).
 
 ## Core Components
 
-- `agents/base_agent.py`: shared abstract interface and validation hooks.
-- `agents/*/agent.py`: agent-specific processing logic.
-- `agents/*/prompts.py`: prompt templates for LLM integration.
-- `models/schemas.py`: shared data models.
-- `orchestrator/workflow.py`: end-to-end pipeline orchestration.
+| File | Role |
+|------|------|
+| `agents/base_agent.py` | Abstract base class — handles timing, logging, error capture, and metadata recording. Do not modify. |
+| `agents/*/agent.py` | Agent business logic — implement your LLM call inside the stub method marked `# TODO`. |
+| `agents/*/prompts.py` | LLM prompt templates — format these and pass them to your LLM client inside `agent.py`. |
+| `models/schemas.py` | All shared data models — do not change without team agreement. |
+| `orchestrator/workflow.py` | Pipeline runner — no changes needed when implementing agent logic. |
 
-## Data Flow
+## Shared State: PlanningContext
 
-Input text -> `TravelProfile` -> `SpotList` + `DiningList` -> `Itinerary` -> `FinalHandbook`
+All agents communicate exclusively through `PlanningContext`. No agent calls another agent directly.
 
-All intermediate state is stored in `PlanningContext`, including:
+```
+PlanningContext
+├── travel_profile     set by User Preference Agent
+├── spot_list          set by Spot Recommendation Agent
+├── dining_list        set by Dining Recommendation Agent
+├── itinerary          set by Route & Hotel Planning Agent
+├── final_handbook     set by Cost Optimization Agent
+├── errors             list of error strings — non-empty stops the pipeline
+├── warnings           list of warning strings — pipeline continues
+└── metadata           dict — stores user_input, agent_runs, workflow timing
+```
 
-- `travel_profile`
-- `spot_list`
-- `dining_list`
-- `itinerary`
-- `final_handbook`
-- `errors`
-- `warnings`
-- `metadata`
+## Data Models (models/schemas.py)
 
-## Responsibilities by Agent
+| Model | Key Fields |
+|-------|------------|
+| `TravelProfile` | destination, start_date, end_date, budget, group_size, travel_style, interests |
+| `SpotList` | spots: List[Spot], filter_criteria, total_count |
+| `DiningList` | restaurants: List[Restaurant], meal_type, filter_criteria, total_count |
+| `Itinerary` | location, days: List[DayItinerary], estimated_total_cost |
+| `FinalHandbook` | title, itinerary, cost_breakdown, optimization_recommendations |
+| `CostBreakdown` | accommodation, transportation, dining, attractions, … (`.total` is computed) |
 
-- User Preference: parse constraints and preferences.
-- Spot Recommendation: suggest points of interest.
-- Dining Recommendation: suggest meal options under constraints.
-- Route and Hotel Planning: create day plans and stay strategy.
-- Cost Optimization: estimate costs and provide optimization actions.
+## How to Implement Your Agent
+
+Each agent has exactly one stub method to fill in. Find the `# TODO:` block in your `agent.py` — it lists the exact steps.
+
+```python
+# agents/<your_agent>/agent.py
+
+def _your_stub_method(self, ...) -> ...:
+    # 1. Format the prompt from prompts.py using fields from travel_profile / context
+    # 2. Call your LLM client (SYSTEM_PROMPT + formatted user prompt)
+    # 3. Parse the JSON the LLM returns
+    # 4. Construct and return the appropriate schema object(s)
+    #
+    # Do NOT touch process(), validate_input(), workflow.py, base_agent.py,
+    # or models/schemas.py.
+    ...
+```
+
+The mock data block currently in each stub is only there so the full pipeline can run end-to-end before real LLM logic exists. Delete it once your LLM call is working.
+
+## Workflow Execution Details
+
+`TravelPlanningWorkflow.run(user_input)` in `orchestrator/workflow.py`:
+
+1. Creates a fresh `PlanningContext`; stores `user_input` in `metadata`
+2. Calls each agent's `execute()` — which wraps `process()` with error handling and timing
+3. After each step, verifies the expected output field is non-None; adds an error if missing
+4. Stops early when `context.errors` is non-empty (fail_fast mode)
+5. Prints a summary and returns the context
 
 ## Quality and Operations
 
-- Unit tests under `tests/`.
-- CI workflow under `.github/workflows/ci.yml`.
-- Environment template in `.env.example`.
-- Dependency management in `requirements.txt`.
+- Unit tests: `tests/test_<agent_name>.py` — run with `pytest tests/ -v`
+- CI: `.github/workflows/ci.yml` — runs automatically on push
+- Environment: copy `.env.example` → `.env` and fill in API keys
+- Dependencies: `requirements.txt`
 
-## Development Notes
+## Development Rules
 
-- Keep models stable and explicit.
-- Keep agent boundaries strict.
-- Use `PlanningContext` as the only cross-agent contract.
-- Add tests when extending schemas or workflow behavior.
+- `PlanningContext` is the only cross-agent contract — never pass objects between agents directly
+- Keep `models/schemas.py` stable — discuss with the team before changing any field
+- Do not modify `orchestrator/workflow.py` or `base_agent.py` to implement agent logic
+- Add or update tests in `tests/` when you change agent behavior
