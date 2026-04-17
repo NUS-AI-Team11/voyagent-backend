@@ -2,16 +2,28 @@
 Spot Recommendation Agent - recommends attractions based on user preferences.
 """
 
+import json
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 from agents.base_agent import BaseAgent
 from models.schemas import SpotList, Spot, TravelProfile, PlanningContext
 from agents.spot_recommendation.prompts import (
     SYSTEM_PROMPT,
     SPOT_RECOMMENDATION_PROMPT,
-    SPOT_FILTERING_PROMPT,
-    SPOT_RANKING_PROMPT
 )
-from typing import List
-from datetime import datetime
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency during early setup
+    def load_dotenv(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - handled by fallback path
+    OpenAI = None  # type: ignore[assignment]
 
 
 class SpotRecommendationAgent(BaseAgent):
@@ -22,6 +34,9 @@ class SpotRecommendationAgent(BaseAgent):
             name="Spot Recommendation Agent",
             description="Recommends attractions matching user travel preferences"
         )
+        load_dotenv()
+        self.model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+        self._client: Optional["OpenAI"] = None
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -93,34 +108,209 @@ class SpotRecommendationAgent(BaseAgent):
             opening_hours, entrance_fee, rating, duration_hours.
             Optional: best_season, accessibility_notes.
         """
-        # ---------------------------------------------------------------------------
-        # MOCK DATA — one placeholder spot so the pipeline can run end-to-end.
-        # Delete this block and replace it with your LLM call when you implement the
-        # real agent logic.
-        # ---------------------------------------------------------------------------
-        spots = [
-            Spot(
-                name="Senso-ji Temple",
-                description="Tokyo's oldest Buddhist temple in Asakusa.",
-                location="2-3-1 Asakusa, Taito City, Tokyo",
-                category="culture",
-                opening_hours="06:00 - 17:00",
-                entrance_fee=0.0,
-                rating=4.8,
-                duration_hours=2.0,
-                best_season="spring",
-                accessibility_notes="Wheelchair accessible main hall",
-            ),
-            Spot(
-                name="Shinjuku Gyoen National Garden",
-                description="Large park famous for cherry blossoms.",
-                location="11 Naito-cho, Shinjuku City, Tokyo",
-                category="nature",
-                opening_hours="09:00 - 16:30",
-                entrance_fee=5.0,
-                rating=4.7,
-                duration_hours=2.5,
-            ),
+        client = self._get_client()
+
+        if client is not None:
+            try:
+                return self._recommend_spots_with_openai(client, travel_profile)
+            except Exception as exc:
+                self.log_execution(
+                    f"OpenAI recommendation failed, falling back to local suggestions: {exc}",
+                    level="warning",
+                )
+
+        return self._fallback_spots(travel_profile)
+
+    def _recommend_spots_with_openai(self, client: "OpenAI", travel_profile: TravelProfile) -> List[Spot]:
+        """Call OpenAI Responses API and map the structured result into Spot objects."""
+        duration_days = (travel_profile.end_date - travel_profile.start_date).days + 1
+        prompt = SPOT_RECOMMENDATION_PROMPT.format(
+            destination=travel_profile.destination,
+            travel_style=travel_profile.travel_style,
+            interests=", ".join(travel_profile.interests) or "general sightseeing",
+            group_size=travel_profile.group_size,
+            duration_days=duration_days,
+        )
+
+        response = client.responses.create(
+            model=self.model,
+            input=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": SYSTEM_PROMPT,
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        }
+                    ],
+                },
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "spot_recommendations",
+                    "strict": True,
+                    "schema": self._spot_response_schema(),
+                }
+            },
+        )
+
+        payload = json.loads(response.output_text)
+        raw_spots = payload.get("spots", [])
+
+        if not raw_spots:
+            raise ValueError("OpenAI returned no spot recommendations")
+
+        return [self._build_spot(item) for item in raw_spots]
+
+    def _get_client(self) -> Optional["OpenAI"]:
+        """Create the OpenAI client lazily so tests can run without API dependencies."""
+        if self._client is not None:
+            return self._client
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if (
+            not api_key
+            or api_key == "OPENAI_API_KEY"
+            or api_key.startswith("REPLACE_WITH_")
+            or OpenAI is None
+        ):
+            return None
+
+        self._client = OpenAI(api_key=api_key)
+        return self._client
+
+    def _build_spot(self, item: Dict[str, Any]) -> Spot:
+        """Normalize one structured model result into the shared Spot schema."""
+        return Spot(
+            name=str(item.get("name") or "Unnamed attraction"),
+            description=str(item.get("description") or "Recommended attraction"),
+            location=str(item.get("location") or "Location unavailable"),
+            category=str(item.get("category") or "general"),
+            opening_hours=self._optional_string(item.get("opening_hours")),
+            entrance_fee=self._safe_float(item.get("entrance_fee")),
+            rating=self._safe_float(item.get("rating"), default=4.0),
+            duration_hours=self._safe_float(item.get("duration_hours"), default=2.0),
+            best_season=self._optional_string(item.get("best_season")),
+            accessibility_notes=self._optional_string(item.get("accessibility_notes")),
+        )
+
+    def _fallback_spots(self, travel_profile: TravelProfile) -> List[Spot]:
+        """Provide deterministic recommendations when API access is unavailable."""
+        destination = travel_profile.destination.strip() or "the destination"
+        interest_text = ", ".join(travel_profile.interests) if travel_profile.interests else "general sightseeing"
+        base_spots = [
+            {
+                "name": f"{destination} Historic Center",
+                "description": f"A walkable area that highlights the city's culture and matches interests in {interest_text}.",
+                "location": f"Central {destination}",
+                "category": "history" if "history" in travel_profile.interests else "culture",
+                "opening_hours": "All day",
+                "entrance_fee": 0.0,
+                "rating": 4.6,
+                "duration_hours": 2.0,
+                "best_season": "spring or autumn",
+                "accessibility_notes": "Mostly accessible, but some streets may be uneven.",
+            },
+            {
+                "name": f"{destination} Signature Museum",
+                "description": "A flagship museum or gallery well-suited to first-time visitors.",
+                "location": f"Museum District, {destination}",
+                "category": "art" if "art" in travel_profile.interests or "museums" in travel_profile.interests else "culture",
+                "opening_hours": "10:00 - 18:00",
+                "entrance_fee": 18.0,
+                "rating": 4.7,
+                "duration_hours": 2.5,
+                "best_season": "year-round",
+                "accessibility_notes": "Indoor venue with accessible entrances.",
+            },
+            {
+                "name": f"{destination} Scenic Park",
+                "description": "A relaxed outdoor stop for views, strolling, and a slower-paced break.",
+                "location": f"Park Zone, {destination}",
+                "category": "nature",
+                "opening_hours": "08:00 - 20:00",
+                "entrance_fee": 0.0,
+                "rating": 4.5,
+                "duration_hours": 1.5,
+                "best_season": "spring",
+                "accessibility_notes": "Paved paths available in main areas.",
+            },
         ]
-        # ---------------------------------------------------------------------------
+
+        recommended_count = min(max((travel_profile.end_date - travel_profile.start_date).days + 4, 6), 10)
+        spots = [self._build_spot(base_spots[index % len(base_spots)]) for index in range(recommended_count)]
+
+        for index, spot in enumerate(spots, start=1):
+            if index > len(base_spots):
+                spot.name = f"{spot.name} #{index}"
+
         return spots
+
+    def _spot_response_schema(self) -> Dict[str, Any]:
+        """JSON schema used to keep the model output stable and parseable."""
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "spots": {
+                    "type": "array",
+                    "minItems": 6,
+                    "maxItems": 15,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "name": {"type": "string"},
+                            "description": {"type": "string"},
+                            "location": {"type": "string"},
+                            "category": {"type": "string"},
+                            "opening_hours": {"type": "string"},
+                            "entrance_fee": {"type": "number"},
+                            "rating": {"type": "number"},
+                            "duration_hours": {"type": "number"},
+                            "best_season": {"type": "string"},
+                            "accessibility_notes": {"type": "string"},
+                        },
+                        "required": [
+                            "name",
+                            "description",
+                            "location",
+                            "category",
+                            "opening_hours",
+                            "entrance_fee",
+                            "rating",
+                            "duration_hours",
+                            "best_season",
+                            "accessibility_notes",
+                        ],
+                    },
+                }
+            },
+            "required": ["spots"],
+        }
+
+    def _optional_string(self, value: Any) -> Optional[str]:
+        """Convert empty-like values to None while preserving useful text."""
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Convert model output to float safely."""
+        if value in (None, ""):
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
