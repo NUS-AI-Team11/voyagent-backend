@@ -2,16 +2,22 @@
 Dining Recommendation Agent - recommends restaurants and dining options.
 """
 
-from agents.base_agent import BaseAgent
-from models.schemas import DiningList, Restaurant, TravelProfile, PlanningContext
-from agents.dining_recommendation.prompts import (
-    SYSTEM_PROMPT,
-    DINING_RECOMMENDATION_PROMPT,
-    MEAL_PLAN_PROMPT,
-    BUDGET_DINING_PROMPT
-)
-from typing import List
+import json
+import logging
+import os
 from datetime import datetime
+from typing import List
+
+from openai import OpenAI
+
+from agents.base_agent import BaseAgent
+from agents.dining_recommendation.prompts import (
+    DINING_RECOMMENDATION_PROMPT,
+    SYSTEM_PROMPT,
+)
+from models.schemas import DiningList, PlanningContext, Restaurant, TravelProfile
+
+logger = logging.getLogger(__name__)
 
 
 class DiningRecommendationAgent(BaseAgent):
@@ -43,19 +49,18 @@ class DiningRecommendationAgent(BaseAgent):
                 return context
 
             travel_profile = context.travel_profile
-
             restaurants = self._recommend_restaurants(travel_profile)
 
             dining_list = DiningList(
                 restaurants=restaurants,
                 meal_type="all",
                 filter_criteria={
-                    'destination': travel_profile.destination,
-                    'dietary_restrictions': travel_profile.dietary_restrictions,
-                    'budget': travel_profile.budget
+                    "destination": travel_profile.destination,
+                    "dietary_restrictions": travel_profile.dietary_restrictions,
+                    "budget": travel_profile.budget,
                 },
                 total_count=len(restaurants),
-                generated_at=datetime.now()
+                generated_at=datetime.now(),
             )
 
             context.dining_list = dining_list
@@ -80,23 +85,140 @@ class DiningRecommendationAgent(BaseAgent):
 
         Returns:
             list of recommended Restaurant objects
-
-        Implementation approach:
-            1. Get comprehensive restaurant database (seeded with destination-specific data)
-            2. Filter by dietary restrictions
-            3. Filter by budget/price range
-            4. Prioritize by travel_style preferences
-            5. Return ranked list
         """
-        # Get all available restaurants for the destination
+        try:
+            return self._recommend_restaurants_llm(travel_profile)
+        except Exception as e:
+            logger.warning(f"LLM call failed: {e}, falling back to mock data")
+
+        return self._recommend_restaurants_mock(travel_profile)
+
+    def _recommend_restaurants_llm(self, travel_profile: TravelProfile) -> List[Restaurant]:
+        """
+        Use DeepSeek to recommend restaurants.
+
+        Args:
+            travel_profile: user travel information
+
+        Returns:
+            list of recommended Restaurant objects
+        """
+        client = self._create_deepseek_client()
+        model = self._get_deepseek_model()
+
+        start_date = travel_profile.start_date
+        end_date = travel_profile.end_date
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+        duration_days = (end_date - start_date).days if start_date and end_date else 7
+
+        user_prompt = DINING_RECOMMENDATION_PROMPT.format(
+            destination=travel_profile.destination,
+            travel_style=travel_profile.travel_style or "general",
+            budget=travel_profile.budget,
+            group_size=travel_profile.group_size,
+            duration_days=duration_days,
+            dietary_restrictions=", ".join(travel_profile.dietary_restrictions) or "none",
+        )
+
+        response = self._chat_json(
+            client=client,
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.7,
+            max_tokens=3000,
+        )
+
+        restaurants = []
+        restaurant_list = response.get("restaurants", response if isinstance(response, list) else [])
+
+        for r in restaurant_list:
+            restaurants.append(
+                Restaurant(
+                    name=r.get("name", ""),
+                    cuisine_type=r.get("cuisine_type", r.get("cuisine", "")),
+                    location=r.get("address", r.get("location", "")),
+                    price_range=r.get("price_range", "$$"),
+                    rating=r.get("rating", 4.0),
+                    average_cost_per_person=r.get("average_cost_per_person", 0),
+                    opening_hours=r.get("opening_hours", ""),
+                    reservations_needed=r.get("reservations_needed", False),
+                    accessibility_notes=r.get("special_notes"),
+                )
+            )
+
+        if not restaurants:
+            raise ValueError("LLM returned no restaurant recommendations")
+
+        logger.info("LLM returned %s restaurant recommendations", len(restaurants))
+        return restaurants
+
+    def _create_deepseek_client(self) -> OpenAI:
+        """Create an OpenAI-compatible client for DeepSeek."""
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY not configured in .env file")
+
+        base_url = os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com"
+        return OpenAI(api_key=api_key, base_url=base_url)
+
+    def _get_deepseek_model(self) -> str:
+        """Get the configured DeepSeek model, normalized for the API."""
+        model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
+        aliases = {
+            "DeepSeek-V3.2": "deepseek-chat",
+            "deepseek-v3.2": "deepseek-chat",
+        }
+        return aliases.get(model, model or "deepseek-chat")
+
+    def _chat_json(
+        self,
+        client: OpenAI,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 3000,
+    ) -> dict:
+        """Call DeepSeek and parse its JSON response."""
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
+
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("LLM returned empty content")
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to parse JSON response: %s", exc)
+            raise
+
+    def _recommend_restaurants_mock(self, travel_profile: TravelProfile) -> List[Restaurant]:
+        """
+        Mock implementation for restaurant recommendations.
+
+        Args:
+            travel_profile: user travel information
+
+        Returns:
+            list of recommended Restaurant objects
+        """
         all_restaurants = self._get_restaurant_database(travel_profile.destination)
-        
-        # Apply filters
         filtered = self._filter_by_dietary_restrictions(all_restaurants, travel_profile.dietary_restrictions)
         filtered = self._filter_by_budget(filtered, travel_profile.budget, travel_profile.group_size)
         filtered = self._prioritize_by_travel_style(filtered, travel_profile.travel_style)
-        
-        # Return top 12-15 restaurants
         return filtered[:15]
 
     def _get_restaurant_database(self, destination: str) -> List[Restaurant]:
@@ -104,7 +226,6 @@ class DiningRecommendationAgent(BaseAgent):
         Get a comprehensive restaurant database for the destination.
         This serves as a mock LLM response and can be replaced with real LLM call later.
         """
-        # Generic database that works for any destination
         restaurants_db = {
             "Tokyo": [
                 Restaurant(
@@ -259,20 +380,16 @@ class DiningRecommendationAgent(BaseAgent):
                 ),
             ]
         }
-        
-        # Return destination-specific restaurants, or generic ones for unknown destinations
+
         if destination in restaurants_db:
             return restaurants_db[destination]
-        else:
-            # Fallback: return Tokyo restaurants for unknown destination
-            return restaurants_db["Tokyo"]
+        return restaurants_db["Tokyo"]
 
     def _filter_by_dietary_restrictions(self, restaurants: List[Restaurant], restrictions: List[str]) -> List[Restaurant]:
         """Filter restaurants based on dietary restrictions."""
         if not restrictions:
             return restaurants
-        
-        # Map dietary restrictions to cuisine/keywords to filter
+
         restriction_keywords = {
             "vegetarian": ["vegetarian", "vegan", "soba", "udon", "tempura", "tofu"],
             "vegan": ["vegetarian", "vegan"],
@@ -280,63 +397,51 @@ class DiningRecommendationAgent(BaseAgent):
             "halal": ["lamb", "chicken", "beef"],
             "kosher": [],
         }
-        
+
         filtered = []
         for restaurant in restaurants:
-            # Check if restaurant matches dietary restrictions
             cuisine_lower = restaurant.cuisine_type.lower()
             is_suitable = False
-            
+
             for restriction in restrictions:
                 keywords = restriction_keywords.get(restriction.lower(), [])
-                if keywords:
-                    # If any keyword matches, mark as potentially suitable
-                    if any(kw in cuisine_lower for kw in keywords):
-                        is_suitable = True
-                        break
-            
-            # For restaurants without specific dietary keywords, include them
-            if not is_suitable and not restrictions:
+                if keywords and any(kw in cuisine_lower for kw in keywords):
+                    is_suitable = True
+                    break
+
+            if is_suitable:
                 filtered.append(restaurant)
-            elif is_suitable:
-                filtered.append(restaurant)
-        
-        return filtered if filtered else restaurants  # Return all if none match (graceful fallback)
+
+        return filtered if filtered else restaurants
 
     def _filter_by_budget(self, restaurants: List[Restaurant], budget: float, group_size: int) -> List[Restaurant]:
         """Filter restaurants based on budget per person."""
         if budget <= 0:
             return restaurants
-        
-        budget_per_person = budget / max(group_size, 1) / 3  # Assume 3 meals per day
-        
-        # Map price ranges to approximate costs
+
+        budget_per_person = budget / max(group_size, 1) / 3
         price_ranges = {
             "$": (0, 20),
             "$$": (20, 50),
             "$$$": (50, 150),
-            "$$$$": (150, float('inf')),
+            "$$$$": (150, float("inf")),
         }
-        
+
         filtered = []
         for restaurant in restaurants:
-            min_cost, max_cost = price_ranges.get(restaurant.price_range, (0, float('inf')))
+            min_cost, max_cost = price_ranges.get(restaurant.price_range, (0, float("inf")))
             avg_cost = restaurant.average_cost_per_person or (min_cost + max_cost) / 2
-            
-            # Include if within budget or slightly over (with preference for cheaper)
-            if avg_cost <= budget_per_person * 1.2:  # Allow 20% over budget
+            if avg_cost <= budget_per_person * 1.2:
                 filtered.append(restaurant)
-        
+
         return filtered if filtered else restaurants
 
     def _prioritize_by_travel_style(self, restaurants: List[Restaurant], travel_style: str) -> List[Restaurant]:
         """Prioritize restaurants based on travel style."""
         if not travel_style:
             return restaurants
-        
+
         travel_style_lower = travel_style.lower()
-        
-        # Define priority keywords for each travel style
         style_priorities = {
             "food": ["sushi", "ramen", "kaiseki", "tempura", "soba", "udon", "izakaya"],
             "luxury": ["$$$$", "fine dining", "kaiseki", "michelin"],
@@ -346,25 +451,18 @@ class DiningRecommendationAgent(BaseAgent):
             "relaxation": ["$$", "cozy", "izakaya"],
             "shopping": ["$$", "$$$"],
         }
-        
+
         priority_keywords = style_priorities.get(travel_style_lower, [])
-        
         if not priority_keywords:
             return restaurants
-        
-        # Sort by relevance: restaurants matching priority keywords come first
+
         def relevance_score(restaurant: Restaurant) -> int:
-            cuisine_lower = restaurant.cuisine_type.lower()
-            name_lower = restaurant.name.lower()
-            combined = f"{cuisine_lower} {name_lower}"
-            
+            combined = f"{restaurant.cuisine_type.lower()} {restaurant.name.lower()}"
             score = 0
             for keyword in priority_keywords:
                 if keyword in combined:
                     score += 1
-            
-            # Secondary sort by rating
             score += restaurant.rating / 10
-            return -score  # Negative for descending sort
-        
+            return -score
+
         return sorted(restaurants, key=relevance_score)
