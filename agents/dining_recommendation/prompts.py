@@ -31,7 +31,23 @@ Please recommend 10-15 restaurants, each including:
 8. Whether reservations are required
 9. Special notes (suitable for specific dietary needs, etc.)
 
-Provide separate recommendations for breakfast, lunch, and dinner. Return a JSON list.
+Provide separate recommendations suitable across breakfast, lunch, and dinner.
+Return valid JSON in this exact shape:
+{{
+  "restaurants": [
+    {{
+      "name": "string",
+      "cuisine_type": "string",
+      "address": "string",
+      "price_range": "$|$$|$$$|$$$$",
+      "average_cost_per_person": 0,
+      "rating": 0,
+      "opening_hours": "string",
+      "reservations_needed": false,
+      "special_notes": "string"
+    }}
+  ]
+}}
 """
 
 MEAL_PLAN_PROMPT = """
