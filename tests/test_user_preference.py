@@ -3,7 +3,8 @@ Tests for User Preference Agent.
 """
 
 import pytest
-from datetime import date, datetime
+from datetime import date
+from unittest.mock import Mock
 from models.schemas import TravelProfile, PlanningContext
 from agents.user_preference.agent import UserPreferenceAgent
 
@@ -33,8 +34,10 @@ def test_process_valid_input(agent, sample_context):
     result = agent.process(sample_context)
 
     assert result is not None
-    # When fully implemented, travel_profile should be populated.
-    # assert result.travel_profile is not None
+    assert result.travel_profile is not None
+    assert result.travel_profile.destination.lower() == "paris"
+    assert result.travel_profile.budget == 5000
+    assert result.travel_profile.group_size == 4
 
 
 def test_process_empty_input(agent):
@@ -74,6 +77,41 @@ def test_create_travel_profile(agent):
     assert profile.destination == 'Tokyo'
     assert profile.budget == 3000
     assert profile.group_size == 2
+
+
+def test_extract_preferences_llm_path(agent):
+    fake_client = Mock()
+    fake_client.chat.completions.create.return_value = Mock(
+        choices=[
+            Mock(
+                message=Mock(
+                    content='{"destination":"Seoul","start_date":"2026-06-01","end_date":"2026-06-05","budget":2400,"group_size":2,"travel_style":"food","interests":["food","culture"],"dietary_restrictions":[],"hotel_preference":"comfortable","transportation_preference":"public_transit","custom_notes":"test"}'
+                )
+            )
+        ]
+    )
+    agent._client = fake_client
+    agent._model = "gpt-4o-mini"
+
+    parsed = agent._extract_preferences("Plan a trip to Seoul")
+
+    assert parsed["destination"] == "Seoul"
+    assert parsed["budget"] == 2400
+    assert parsed["group_size"] == 2
+    assert parsed["start_date"] == date(2026, 6, 1)
+    assert parsed["end_date"] == date(2026, 6, 5)
+
+
+def test_extract_preferences_fallback_when_no_client(agent):
+    agent._client = None
+    parsed = agent._extract_preferences(
+        "I want to visit Rome, departing June 10 and returning June 15. Budget $3200 for 3 people. We enjoy culture and food."
+    )
+
+    assert parsed["destination"].lower() == "rome"
+    assert parsed["budget"] == 3200
+    assert parsed["group_size"] == 3
+    assert parsed["travel_style"] in {"culture", "food", "general"}
 
 
 if __name__ == '__main__':
