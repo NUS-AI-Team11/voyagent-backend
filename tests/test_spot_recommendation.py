@@ -2,8 +2,10 @@
 Tests for Spot Recommendation Agent.
 """
 
+import json
+
 import pytest
-from models.schemas import TravelProfile, SpotList, PlanningContext
+from models.schemas import TravelProfile, PlanningContext
 from agents.spot_recommendation.agent import SpotRecommendationAgent
 from datetime import date
 
@@ -37,8 +39,9 @@ def test_process_valid_input(agent, sample_context):
     result = agent.process(sample_context)
 
     assert result is not None
-    # When fully implemented, spot_list should be populated.
-    # assert result.spot_list is not None
+    assert result.spot_list is not None
+    assert result.spot_list.total_count >= 1
+    assert len(result.spot_list.spots) == result.spot_list.total_count
 
 
 def test_process_missing_travel_profile(agent):
@@ -57,6 +60,46 @@ def test_validate_input_failure(agent):
     context = PlanningContext()
 
     assert agent.validate_input(context) is False
+
+
+def test_recommend_spots_uses_openai_when_client_available(agent, sample_context, monkeypatch):
+    class FakeResponses:
+        @staticmethod
+        def create(**kwargs):
+            assert kwargs["model"] == agent.model
+            return type(
+                "FakeResponse",
+                (),
+                {
+                    "output_text": json.dumps(
+                        {
+                            "spots": [
+                                {
+                                    "name": "Louvre Museum",
+                                    "description": "Major art museum in Paris.",
+                                    "location": "Rue de Rivoli, Paris",
+                                    "category": "art",
+                                    "opening_hours": "09:00 - 18:00",
+                                    "entrance_fee": 22.0,
+                                    "rating": 4.8,
+                                    "duration_hours": 3.0,
+                                    "best_season": "year-round",
+                                    "accessibility_notes": "Accessible entrances available.",
+                                }
+                            ]
+                        }
+                    )
+                },
+            )()
+
+    fake_client = type("FakeClient", (), {"responses": FakeResponses()})()
+    monkeypatch.setattr(agent, "_get_client", lambda: fake_client)
+
+    spots = agent._recommend_spots(sample_context.travel_profile)
+
+    assert len(spots) == 1
+    assert spots[0].name == "Louvre Museum"
+    assert spots[0].category == "art"
 
 
 if __name__ == '__main__':
