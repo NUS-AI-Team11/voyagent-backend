@@ -40,6 +40,10 @@ pytest tests/ -v
 
 See [docs/QUICK_START.md](docs/QUICK_START.md) for step-by-step instructions and troubleshooting.
 
+## HTTP API
+
+FastAPI app exposes the full pipeline (all five agents). Run `uvicorn api.main:app --reload --host 0.0.0.0 --port 8000`, then open `/docs`. Endpoint reference: [docs/API.md](docs/API.md).
+
 ## Directory Structure
 
 ```

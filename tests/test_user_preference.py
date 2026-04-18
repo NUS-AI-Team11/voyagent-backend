@@ -31,6 +31,8 @@ def test_agent_initialization(agent):
 
 
 def test_process_valid_input(agent, sample_context):
+    # Deterministic: avoid relying on LLM when OPENAI_API_KEY is present in the environment.
+    agent._client = None
     result = agent.process(sample_context)
 
     assert result is not None
