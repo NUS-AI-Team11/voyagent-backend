@@ -35,25 +35,28 @@ Please analyze:
 """
 
 OPTIMIZATION_RECOMMENDATION_PROMPT = """
-Provide cost optimization suggestions for the following itinerary:
+The traveller is over budget. Write one short, concrete saving tip for each category listed below.
+Tailor each tip to the destination and travel style provided.
 
-Current total cost: {current_cost}
+Destination: {destination}
+Travel style: {travel_style}
 Budget: {budget}
-Overage: {overage}
+Total cost: {total_cost}
+Over budget by: {overage}
 
-Itinerary details:
-{itinerary}
+Categories to address (with estimated spend):
+{category_lines}
 
-Please provide:
-1. High-priority suggestions (immediately actionable)
-2. Medium-priority suggestions (require adjustments)
-3. Low-priority suggestions (optional)
+Return valid JSON in this exact format — a top-level object with a "suggestions" array:
+{{"suggestions": [
+  {{"category": "<name>", "suggestion": "<one actionable sentence tailored to the destination>"}},
+  ...
+]}}
 
-For each suggestion include:
-- Description
-- Estimated savings
-- Impact on experience (1-5)
-- Implementation difficulty (1-5)
+Rules:
+- One sentence per suggestion, max 20 words
+- Be specific to the destination, not generic
+- Do not include savings amounts or confidence scores — only category and suggestion
 """
 
 BUDGET_ALLOCATION_PROMPT = """
