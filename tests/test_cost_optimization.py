@@ -14,12 +14,11 @@ from datetime import date
 # ── fixtures ────────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def agent(monkeypatch):
+def agent():
     """Create agent with mocked OpenAI client for testing."""
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-dummy")
-    with patch('agents.cost_optimization.agent.OpenAI') as mock_openai:
-        mock_openai.return_value = MagicMock()
-        return CostOptimizationAgent()
+    instance = CostOptimizationAgent()
+    instance._client = MagicMock()
+    return instance
 
 
 @pytest.fixture

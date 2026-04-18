@@ -25,7 +25,9 @@ class CostOptimizationAgent(BaseAgent):
             name="Cost Optimization Agent",
             description="Analyzes itinerary costs and provides optimization suggestions to stay within budget"
         )
-        self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # Lazy init: do not require OPENAI_API_KEY when this agent is only inspected
+        # (e.g. metadata endpoints that list workflow steps/agents).
+        self._client = None
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -247,7 +249,8 @@ class CostOptimizationAgent(BaseAgent):
         )
 
         try:
-            response = self._client.chat.completions.create(
+            client = self._get_openai_client()
+            response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
@@ -264,3 +267,13 @@ class CostOptimizationAgent(BaseAgent):
         except Exception as e:
             self.log_execution(f"LLM suggestion fetch failed: {e}", level="warning")
             return {}
+
+    def _get_openai_client(self) -> OpenAI:
+        """Build OpenAI client only when LLM suggestions are actually requested."""
+        if self._client is not None:
+            return self._client
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is not configured")
+        self._client = OpenAI(api_key=api_key)
+        return self._client
