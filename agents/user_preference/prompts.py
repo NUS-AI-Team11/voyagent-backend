@@ -29,6 +29,11 @@ Please extract:
 10. Transportation preference: self-drive / public transit / flights / etc.
 11. Any other special requirements
 
+Return a single JSON object only. Use these types:
+- budget: a JSON number only (no currency words), e.g. 4200 for "USD 4,200"
+- group_size: integer
+- start_date / end_date: "YYYY-MM-DD" strings
+
 Return structured data in JSON format.
 """
 

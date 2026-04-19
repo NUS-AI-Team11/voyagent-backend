@@ -116,5 +116,24 @@ def test_extract_preferences_fallback_when_no_client(agent):
     assert parsed["travel_style"] in {"culture", "food", "general"}
 
 
+def test_parse_budget_usd_phrase(agent):
+    text = (
+        "Our total budget is USD 4,200 (excluding flights). "
+        "We are 2 adults traveling April 8–April 13, 2026."
+    )
+    assert agent._parse_budget(text) == 4200.0
+
+
+def test_safe_float_strips_currency_string(agent):
+    assert agent._safe_float("USD 4,200", default=0.0) == 4200.0
+    assert agent._safe_float("$1,234.50", default=0.0) == 1234.5
+
+
+def test_normalize_repairs_budget_from_raw_text(agent):
+    raw = "Planning Kyoto. Our total budget is USD 4,200 for 2 adults."
+    normalized = agent._normalize_preference_data({"destination": "Kyoto", "budget": "USD 4,200"}, raw)
+    assert normalized["budget"] == 4200.0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
