@@ -2,14 +2,18 @@
 FastAPI application: full HTTP surface for the VoyageAgent travel planning backend.
 """
 
+import json
 import os
+import queue
+import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import Any
+from typing import Any, Iterator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from api.schemas_http import (
     AgentsResponse,
@@ -22,6 +26,7 @@ from api.schemas_http import (
     WorkflowStepItem,
 )
 from api.serialization import planning_context_to_dict
+from models.schemas import PlanningContext
 from orchestrator.workflow import TravelPlanningWorkflow
 
 # Load .env before reading CORS_* / APP_* so middleware and routes see the file.
@@ -66,6 +71,24 @@ def _workflow_for_request(fail_fast: bool, print_summary: bool) -> TravelPlannin
 def _metadata_workflow() -> TravelPlanningWorkflow:
     """Single cached workflow for step/agent metadata endpoints (no run)."""
     return TravelPlanningWorkflow(fail_fast=True, print_summary=False)
+
+
+def _plan_response_from_context(context: PlanningContext) -> PlanResponse:
+    payload = planning_context_to_dict(context)
+    ok = len(context.errors) == 0
+    return PlanResponse(
+        ok=ok,
+        travel_profile=payload.get("travel_profile"),
+        spot_list=payload.get("spot_list"),
+        dining_list=payload.get("dining_list"),
+        itinerary=payload.get("itinerary"),
+        itinerary_narrative=payload.get("itinerary_narrative"),
+        final_handbook=payload.get("final_handbook"),
+        final_handbook_summary=payload.get("final_handbook_summary"),
+        errors=payload.get("errors") or [],
+        warnings=payload.get("warnings") or [],
+        metadata=payload.get("metadata") or {},
+    )
 
 
 @app.get("/", tags=["meta"])
@@ -131,17 +154,75 @@ def run_plan(body: PlanRequest) -> PlanResponse:
     """
     wf = _workflow_for_request(fail_fast=body.fail_fast, print_summary=body.print_summary)
     context = wf.run(body.user_input.strip())
-    payload = planning_context_to_dict(context)
-    ok = len(context.errors) == 0
-    return PlanResponse(
-        ok=ok,
-        travel_profile=payload.get("travel_profile"),
-        spot_list=payload.get("spot_list"),
-        dining_list=payload.get("dining_list"),
-        itinerary=payload.get("itinerary"),
-        final_handbook=payload.get("final_handbook"),
-        final_handbook_summary=payload.get("final_handbook_summary"),
-        errors=payload.get("errors") or [],
-        warnings=payload.get("warnings") or [],
-        metadata=payload.get("metadata") or {},
+    return _plan_response_from_context(context)
+
+
+@app.post(f"{API_PREFIX}/plan/stream", tags=["planning"])
+def run_plan_stream(body: PlanRequest) -> StreamingResponse:
+    """
+    Same pipeline as POST /plan, streamed as SSE (`data: {json}\\n\\n`).
+    Events: `step_running`, `step_done`, then `complete` with the full PlanResponse, or `error`.
+    """
+
+    def event_generator() -> Iterator[str]:
+        q: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue()
+
+        def worker() -> None:
+            try:
+                wf = _workflow_for_request(fail_fast=body.fail_fast, print_summary=body.print_summary)
+
+                def before_step(step_index: int, label: str, output_field: str, ctx: PlanningContext) -> None:
+                    q.put(
+                        (
+                            "event",
+                            {
+                                "type": "step_running",
+                                "step_index": step_index,
+                                "label": label,
+                                "output_field": output_field,
+                            },
+                        )
+                    )
+
+                def after_step(step_index: int, label: str, output_field: str, ctx: PlanningContext) -> None:
+                    q.put(
+                        (
+                            "event",
+                            {
+                                "type": "step_done",
+                                "step_index": step_index,
+                                "label": label,
+                                "output_field": output_field,
+                                "error_count": len(ctx.errors),
+                            },
+                        )
+                    )
+
+                context = wf.run(
+                    body.user_input.strip(),
+                    before_step=before_step,
+                    after_step=after_step,
+                )
+                resp = _plan_response_from_context(context)
+                q.put(("event", {"type": "complete", "result": resp.model_dump()}))
+            except Exception as e:
+                q.put(("event", {"type": "error", "message": str(e)}))
+            finally:
+                q.put(("end", {}))
+
+        threading.Thread(target=worker, daemon=True).start()
+        while True:
+            kind, data = q.get()
+            if kind == "end":
+                break
+            yield f"data: {json.dumps(data, default=str)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

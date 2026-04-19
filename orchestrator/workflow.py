@@ -5,7 +5,7 @@ Agent orchestrator - main business logic for the planning pipeline.
 import logging
 import time
 from datetime import datetime
-from typing import Dict, Any, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from models.schemas import PlanningContext
 from agents.user_preference.agent import UserPreferenceAgent
@@ -49,12 +49,20 @@ class TravelPlanningWorkflow:
 
         logger.info("Travel planning workflow initialized with 5 agents.")
 
-    def run(self, user_input: str) -> PlanningContext:
+    def run(
+        self,
+        user_input: str,
+        *,
+        before_step: Optional[Callable[[int, str, str, PlanningContext], None]] = None,
+        after_step: Optional[Callable[[int, str, str, PlanningContext], None]] = None,
+    ) -> PlanningContext:
         """
         Execute the full travel planning workflow.
 
         Args:
             user_input: raw user input string
+            before_step: optional hook called before each agent step (1-based index, label, output_field, context).
+            after_step: optional hook called after each agent step completes.
 
         Returns:
             PlanningContext containing the complete planning result
@@ -76,7 +84,11 @@ class TravelPlanningWorkflow:
                     break
 
                 logger.info(f"\n[Step {index}] Running {label} Agent...")
+                if before_step:
+                    before_step(index, label, output_field, context)
                 context = self._run_step(context, agent, output_field, required)
+                if after_step:
+                    after_step(index, label, output_field, context)
 
         except Exception as e:
             context.add_error(f"Workflow execution failed: {str(e)}")

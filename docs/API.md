@@ -22,6 +22,7 @@ Base URL: `/api/v1` (when served at server root). OpenAPI UI: `/docs`, ReDoc: `/
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/plan` | Runs **User Preference → Spot → Dining → Route/Hotel → Cost** and returns the full structured result. |
+| POST | `/api/v1/plan/stream` | Same pipeline; **Server-Sent Events** (`text/event-stream`). Each line is `data: {json}` (double newline between events). |
 
 ### `POST /api/v1/plan`
 
@@ -43,8 +44,22 @@ Base URL: `/api/v1` (when served at server root). OpenAPI UI: `/docs`, ReDoc: `/
 | `itinerary` | Route & Hotel Planning Agent. |
 | `final_handbook` | Cost Optimization Agent (full handbook). |
 | `final_handbook_summary` | Short summary when handbook exists (budget, totals, `is_within_budget`). |
+| `itinerary_narrative` | When `itinerary` exists, a plain-language multi-paragraph summary of `days` (for handbook UIs). |
 | `errors`, `warnings` | Lists of strings. |
 | `metadata` | Includes `workflow_elapsed_ms`, `workflow_steps`, `agent_runs`, etc. |
+
+### `POST /api/v1/plan/stream`
+
+Same request body as `POST /api/v1/plan`. Response is **not** JSON — it is **SSE**: repeated `data: <event_json>\n\n`.
+
+Event `type` values:
+
+| `type` | Fields | Meaning |
+|--------|--------|---------|
+| `step_running` | `step_index`, `label`, `output_field` | A pipeline step is starting (1-based index). |
+| `step_done` | `step_index`, `label`, `output_field`, `error_count` | That step finished. |
+| `complete` | `result` | Full `PlanResponse` object (same shape as non-streaming `/plan`). |
+| `error` | `message` | Unrecoverable server-side failure before `complete`. |
 
 ## CORS
 

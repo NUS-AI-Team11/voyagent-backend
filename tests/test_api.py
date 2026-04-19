@@ -64,7 +64,11 @@ def test_plan_mocked(client):
     ctx = PlanningContext()
     ctx.metadata["user_input"] = "test"
     with patch("api.main.TravelPlanningWorkflow") as mock_wf:
-        mock_wf.return_value.run.return_value = ctx
+
+        def _run(_ui: str, **kwargs):
+            return ctx
+
+        mock_wf.return_value.run = _run
         r = client.post("/api/v1/plan", json={"user_input": "Plan a trip to Tokyo"})
     assert r.status_code == 200
     data = r.json()
@@ -73,6 +77,35 @@ def test_plan_mocked(client):
     assert data["travel_profile"] is None
 
 
+def test_plan_stream_mocked(client):
+    ctx = PlanningContext()
+    ctx.metadata["user_input"] = "test"
+
+    def _run(_ui: str, *, before_step=None, after_step=None):
+        for i in range(1, 6):
+            if before_step:
+                before_step(i, f"Step {i}", f"field_{i}", ctx)
+            if after_step:
+                after_step(i, f"Step {i}", f"field_{i}", ctx)
+        return ctx
+
+    with patch("api.main.TravelPlanningWorkflow") as mock_wf:
+        mock_wf.return_value.run = _run
+        with client.stream("POST", "/api/v1/plan/stream", json={"user_input": "Plan a trip"}) as r:
+            assert r.status_code == 200
+            body = b"".join(r.iter_bytes())
+    text = body.decode()
+    assert "step_running" in text
+    assert "step_done" in text
+    assert "complete" in text
+    assert '"ok"' in text
+
+
 def test_plan_validation_empty(client):
     r = client.post("/api/v1/plan", json={"user_input": ""})
+    assert r.status_code == 422
+
+
+def test_plan_stream_validation_empty(client):
+    r = client.post("/api/v1/plan/stream", json={"user_input": ""})
     assert r.status_code == 422

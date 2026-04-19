@@ -26,6 +26,10 @@ class PlanResponse(BaseModel):
     spot_list: Optional[Dict[str, Any]] = None
     dining_list: Optional[Dict[str, Any]] = None
     itinerary: Optional[Dict[str, Any]] = None
+    itinerary_narrative: Optional[str] = Field(
+        None,
+        description="Plain-language summary of itinerary.days for handbook-style UIs.",
+    )
     final_handbook: Optional[Dict[str, Any]] = None
     final_handbook_summary: Optional[Dict[str, Any]] = None
     errors: List[str] = Field(default_factory=list)

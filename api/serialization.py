@@ -6,6 +6,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
+from api.narrative import itinerary_dict_to_narrative
 from models.schemas import CostBreakdown, PlanningContext
 
 
@@ -51,4 +52,9 @@ def planning_context_to_dict(context: PlanningContext) -> dict[str, Any]:
             "budget_remaining": fh.budget_remaining,
             "is_within_budget": fh.is_within_budget,
         }
+    itin = result.get("itinerary")
+    if itin:
+        narrative = itinerary_dict_to_narrative(itin)
+        if narrative:
+            result["itinerary_narrative"] = narrative
     return result
