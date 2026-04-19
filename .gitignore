@@ -32,3 +32,6 @@ node_modules/
 dist/
 build/
 *.egg-info/
+
+# 独立前端仓库（嵌套在目录内，自有 .git，不由本仓库跟踪）
+voyagent-frontend/

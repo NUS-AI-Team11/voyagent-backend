@@ -24,12 +24,14 @@ from api.schemas_http import (
 from api.serialization import planning_context_to_dict
 from orchestrator.workflow import TravelPlanningWorkflow
 
+# Load .env before reading CORS_* / APP_* so middleware and routes see the file.
+load_dotenv()
+
 API_PREFIX = "/api/v1"
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    load_dotenv()
     yield
 
 
