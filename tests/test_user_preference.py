@@ -135,5 +135,42 @@ def test_normalize_repairs_budget_from_raw_text(agent):
     assert normalized["budget"] == 4200.0
 
 
+def test_supplement_dates_from_en_dash_range_when_llm_omits(agent):
+    raw = (
+        "Kyoto for 2 adults. Our total budget is USD 4,200. "
+        "We are traveling April 8–April 13, 2026."
+    )
+    normalized = agent._normalize_preference_data(
+        {
+            "destination": "Kyoto",
+            "start_date": None,
+            "end_date": None,
+            "budget": 4200,
+            "group_size": 2,
+            "travel_style": "culture",
+        },
+        raw,
+    )
+    assert normalized["start_date"] == date(2026, 4, 8)
+    assert normalized["end_date"] == date(2026, 4, 13)
+
+
+def test_supplement_dates_from_two_iso_tokens(agent):
+    raw = "Tokyo between 2026-05-01 and 2026-05-07, budget 3000 USD"
+    normalized = agent._normalize_preference_data(
+        {
+            "destination": "Tokyo",
+            "start_date": None,
+            "end_date": None,
+            "budget": 3000,
+            "group_size": 2,
+            "travel_style": "food",
+        },
+        raw,
+    )
+    assert normalized["start_date"] == date(2026, 5, 1)
+    assert normalized["end_date"] == date(2026, 5, 7)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

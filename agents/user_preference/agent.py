@@ -5,8 +5,8 @@ User Preference Agent - collects and parses user travel preferences.
 import json
 import os
 import re
-from typing import Dict, Any, List
-from datetime import datetime, date
+from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, date, timedelta
 
 from openai import OpenAI
 
@@ -164,6 +164,11 @@ class UserPreferenceAgent(BaseAgent):
             if text_budget > 0:
                 normalized["budget"] = text_budget
 
+        if not str(normalized.get("travel_style") or "").strip():
+            normalized["travel_style"] = self._parse_travel_style(user_input) or "general"
+
+        self._supplement_dates_from_user_text(normalized, user_input)
+
         return normalized
 
     def _validate_required_fields(self, preference_data: Dict[str, Any]) -> list:
@@ -176,10 +181,27 @@ class UserPreferenceAgent(BaseAgent):
         Returns:
             list of missing field names
         """
-        missing = []
+        missing: List[str] = []
         for field in self.required_fields:
-            if not preference_data.get(field):
-                missing.append(field)
+            v = preference_data.get(field)
+            if field in ("start_date", "end_date"):
+                if v is None:
+                    missing.append(field)
+            elif field == "budget":
+                if v is None or self._safe_float(v, default=0.0) <= 0:
+                    missing.append(field)
+            elif field == "destination":
+                if not str(v or "").strip():
+                    missing.append(field)
+            elif field == "group_size":
+                if v is None or self._safe_int(v, default=0) < 1:
+                    missing.append(field)
+            elif field == "travel_style":
+                if not str(v or "").strip():
+                    missing.append(field)
+            else:
+                if v is None or (isinstance(v, str) and not v.strip()):
+                    missing.append(field)
         return missing
 
     def _create_travel_profile(self, preference_data: Dict[str, Any]) -> TravelProfile:
@@ -235,15 +257,157 @@ class UserPreferenceAgent(BaseAgent):
             return None
 
         text = str(value).strip()
-        try:
-            return datetime.strptime(text, "%Y-%m-%d").date()
-        except ValueError:
-            pass
+        if "T" in text and re.match(r"^\d{4}-\d{2}-\d{2}", text):
+            text = text.split("T", 1)[0]
+        for fmt in (
+            "%Y-%m-%d",
+            "%Y/%m/%d",
+            "%m/%d/%Y",
+            "%d/%m/%Y",
+            "%B %d, %Y",
+            "%b %d, %Y",
+            "%d %B %Y",
+            "%d %b %Y",
+            "%B %d %Y",
+            "%b %d %Y",
+        ):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
         try:
             parsed = datetime.strptime(text, "%B %d")
             return parsed.replace(year=date.today().year).date()
         except ValueError:
+            pass
+        try:
+            parsed = datetime.strptime(text, "%b %d")
+            return parsed.replace(year=date.today().year).date()
+        except ValueError:
             return None
+
+    _MONTH_NAMES = {
+        "january": 1,
+        "jan": 1,
+        "february": 2,
+        "feb": 2,
+        "march": 3,
+        "mar": 3,
+        "april": 4,
+        "apr": 4,
+        "may": 5,
+        "june": 6,
+        "jun": 6,
+        "july": 7,
+        "jul": 7,
+        "august": 8,
+        "aug": 8,
+        "september": 9,
+        "sep": 9,
+        "sept": 9,
+        "october": 10,
+        "oct": 10,
+        "november": 11,
+        "nov": 11,
+        "december": 12,
+        "dec": 12,
+    }
+
+    _MONTH_RE = (
+        r"(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
+        r"august|aug|september|sep|sept|october|oct|november|nov|december|dec)"
+    )
+
+    def _month_num(self, name: str) -> Optional[int]:
+        return self._MONTH_NAMES.get(name.lower().strip())
+
+    def _scan_iso_dates_in_text(self, text: str) -> List[date]:
+        found: List[date] = []
+        for m in re.finditer(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text):
+            try:
+                found.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+            except ValueError:
+                continue
+        for m in re.finditer(r"(\d{4})年(\d{1,2})月(\d{1,2})日", text):
+            try:
+                found.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+            except ValueError:
+                continue
+        return found
+
+    def _parse_month_day_range_same_year(self, text: str) -> Tuple[Optional[date], Optional[date]]:
+        """
+        Patterns like 'April 8–April 13, 2026' or 'Apr 8–13, 2026' (same month).
+        """
+        pat_full = re.compile(
+            rf"\b(?P<m1>{self._MONTH_RE})\s+(?P<d1>\d{{1,2}})\s*[–\-]\s*(?:(?P<m2>{self._MONTH_RE})\s+)?(?P<d2>\d{{1,2}})\s*,?\s*(?P<y>\d{{4}})\b",
+            re.IGNORECASE,
+        )
+        m = pat_full.search(text)
+        if not m:
+            return None, None
+        m1 = self._month_num(m.group("m1"))
+        y = int(m.group("y"))
+        d1 = int(m.group("d1"))
+        d2 = int(m.group("d2"))
+        if m1 is None:
+            return None, None
+        m2_raw = m.group("m2")
+        if m2_raw:
+            m2 = self._month_num(m2_raw)
+            if m2 is None:
+                return None, None
+        else:
+            m2 = m1
+        try:
+            start = date(y, m1, d1)
+            end = date(y, m2, d2)
+        except ValueError:
+            return None, None
+        if end < start:
+            start, end = end, start
+        return start, end
+
+    def _parse_trip_nights(self, text: str) -> Optional[int]:
+        m = re.search(r"\b(\d+)\s*(?:night|nights)\b", text, re.IGNORECASE)
+        if not m:
+            return None
+        return max(1, int(m.group(1)))
+
+    def _supplement_dates_from_user_text(self, normalized: Dict[str, Any], user_input: str) -> None:
+        """Fill missing start/end dates using ISO tokens and common natural-language ranges in the raw text."""
+        if normalized.get("start_date") and normalized.get("end_date"):
+            return
+
+        start_guess: Optional[date] = None
+        end_guess: Optional[date] = None
+
+        iso_dates = self._scan_iso_dates_in_text(user_input)
+        if len(iso_dates) >= 2:
+            start_guess, end_guess = min(iso_dates), max(iso_dates)
+        elif len(iso_dates) == 1:
+            start_guess = iso_dates[0]
+
+        if start_guess is None or end_guess is None:
+            r_start, r_end = self._parse_month_day_range_same_year(user_input)
+            if r_start and r_end:
+                start_guess = start_guess or r_start
+                end_guess = end_guess or r_end
+
+        if not normalized.get("start_date") and start_guess:
+            normalized["start_date"] = start_guess
+        if not normalized.get("end_date") and end_guess:
+            normalized["end_date"] = end_guess
+
+        if normalized.get("start_date") and not normalized.get("end_date"):
+            nights = self._parse_trip_nights(user_input)
+            if nights is not None:
+                normalized["end_date"] = normalized["start_date"] + timedelta(days=nights)
+            else:
+                normalized["end_date"] = normalized["start_date"] + timedelta(days=5)
+
+        if normalized.get("end_date") and not normalized.get("start_date"):
+            normalized["start_date"] = normalized["end_date"] - timedelta(days=5)
 
     def _parse_destination(self, user_input: str) -> str:
         """Extract destination from free text with simple patterns."""

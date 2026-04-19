@@ -32,7 +32,7 @@ Please extract:
 Return a single JSON object only. Use these types:
 - budget: a JSON number only (no currency words), e.g. 4200 for "USD 4,200"
 - group_size: integer
-- start_date / end_date: "YYYY-MM-DD" strings
+- start_date / end_date: "YYYY-MM-DD" strings (never null if the user mentioned any dates or trip length; infer from phrases like "Apr 8–14, 2026" or "6 nights")
 
 Return structured data in JSON format.
 """
