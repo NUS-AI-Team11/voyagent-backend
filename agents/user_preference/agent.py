@@ -156,6 +156,14 @@ class UserPreferenceAgent(BaseAgent):
             normalized.get("transportation_preference")
         )
         normalized["custom_notes"] = self._normalize_optional_string(normalized.get("custom_notes")) or user_input
+
+        # If LLM returned budget as a string like "USD 4,200" or omitted it, repair from raw text.
+        bud = self._safe_float(normalized.get("budget"), default=0.0)
+        if bud <= 0:
+            text_budget = self._parse_budget(user_input)
+            if text_budget > 0:
+                normalized["budget"] = text_budget
+
         return normalized
 
     def _validate_required_fields(self, preference_data: Dict[str, Any]) -> list:
@@ -268,12 +276,22 @@ class UserPreferenceAgent(BaseAgent):
 
     def _parse_budget(self, user_input: str) -> float:
         """Extract first currency-like number as budget."""
-        match = re.search(r"(?:budget|total)\D*\$?\s*([0-9][0-9,]*(?:\.\d+)?)", user_input, re.IGNORECASE)
-        if not match:
-            match = re.search(r"\$\s*([0-9][0-9,]*(?:\.\d+)?)", user_input)
-        if not match:
-            return 0.0
-        return self._safe_float(match.group(1).replace(",", ""), default=0.0)
+        patterns = [
+            # "total budget is USD 4,200" / "budget of EUR 3.500,50" (European decimals less common)
+            r"(?:budget|total\s+budget)\s+is\s+(?:USD|EUR|GBP)\s*([0-9][0-9,\.]*)",
+            r"(?:budget|total)\s+(?:is\s+)?(?:USD|EUR|GBP)\s*([0-9][0-9,\.]*)",
+            r"(?:budget|total)\D*\$?\s*([0-9][0-9,]*(?:\.\d+)?)",
+            r"\$\s*([0-9][0-9,]*(?:\.\d+)?)",
+            r"(?<![A-Za-z])(?:USD|EUR|GBP)\s*([0-9][0-9,\.]*)",
+        ]
+        for pat in patterns:
+            match = re.search(pat, user_input, re.IGNORECASE)
+            if match:
+                raw = match.group(1).replace(",", "")
+                val = self._safe_float(raw, default=0.0)
+                if val > 0:
+                    return val
+        return 0.0
 
     def _parse_group_size(self, user_input: str) -> int:
         """Extract group size from common phrases."""
@@ -336,6 +354,19 @@ class UserPreferenceAgent(BaseAgent):
         """Convert a value to float with a safe fallback."""
         if value is None or value == "":
             return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            s = value.strip()
+            s = re.sub(r"(?i)^\s*(usd|eur|gbp|\$)\s*", "", s)
+            s = re.sub(r"(?i)\s*(usd|eur|gbp)\s*$", "", s)
+            s = s.replace(",", "").strip()
+            if not s:
+                return default
+            try:
+                return float(s)
+            except ValueError:
+                return default
         try:
             return float(value)
         except (TypeError, ValueError):
