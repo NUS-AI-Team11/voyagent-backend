@@ -108,6 +108,7 @@ class TravelPlanningWorkflow:
 
         return context
 
+
     def _run_step(self, context: PlanningContext, agent: Any, output_field: str, required: bool) -> PlanningContext:
         """Execute one workflow step and validate its expected output."""
         prev_error_count = len(context.errors)

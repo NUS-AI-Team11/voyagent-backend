@@ -26,6 +26,28 @@ def setup_logging():
     )
 
 
+def print_compact_itinerary(context):
+    """Print a compact day-by-day route view from final handbook itinerary."""
+    handbook = context.final_handbook
+    if not handbook or not handbook.itinerary or not handbook.itinerary.days:
+        return
+
+    print("\nRoute plan:")
+    for day in handbook.itinerary.days:
+        print(f"- Day {day.day_number} ({day.date}):")
+        if not day.activities:
+            print("  * No activities planned")
+            continue
+
+        for activity in day.activities:
+            time_text = activity.get("time", "TBD")
+            name = activity.get("name", "Activity")
+            location = activity.get("location", "Unknown location")
+            transit = activity.get("travel_minutes_from_previous")
+            transit_text = f" | transit {transit} min" if transit is not None else ""
+            print(f"  * {time_text} | {name} | {location}{transit_text}")
+
+
 def main():
     """Main function."""
     setup_logging()
@@ -56,6 +78,7 @@ def main():
         if context.final_handbook:
             print("\nPlanning complete.")
             print(f"Travel handbook: {context.final_handbook.title}")
+            print_compact_itinerary(context)
         else:
             print("\nPlanning encountered issues.")
             if context.errors:
