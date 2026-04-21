@@ -1,0 +1,63 @@
+name: CD Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI Tests"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Upload project files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          source: "."
+          target: ${{ secrets.DEPLOY_APP_DIR }}
+          rm: false
+          strip_components: 0
+          overwrite: true
+          tar_dereference: true
+          exclude: ".git,.github,.venv,venv,__pycache__,.pytest_cache,coverage.xml"
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
+          APP_NAME: ${{ secrets.DEPLOY_APP_NAME }}
+          HOST_PORT: ${{ secrets.DEPLOY_HOST_PORT }}
+          CONTAINER_PORT: ${{ secrets.DEPLOY_CONTAINER_PORT }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          envs: APP_DIR,APP_NAME,HOST_PORT,CONTAINER_PORT,OPENAI_API_KEY
+          script: |
+            set -e
+            mkdir -p "$APP_DIR"
+            cd "$APP_DIR"
+
+            docker build -t "$APP_NAME:latest" .
+            docker rm -f "$APP_NAME" || true
+            docker run -d \
+              --name "$APP_NAME" \
+              --restart unless-stopped \
+              -p "$HOST_PORT:$CONTAINER_PORT" \
+              -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+              "$APP_NAME:latest"
