@@ -172,5 +172,31 @@ def test_supplement_dates_from_two_iso_tokens(agent):
     assert normalized["end_date"] == date(2026, 5, 7)
 
 
+def test_normalize_recovers_real_world_ui_prompt_fields(agent):
+    raw = (
+        "I will travel to Singapore for 3 days next month with my partner. "
+        "We like city walks, museums, and local food. Budget is medium."
+    )
+    normalized = agent._normalize_preference_data(
+        {
+            "destination": "",
+            "start_date": None,
+            "end_date": None,
+            "budget": 0,
+            "group_size": 2,
+            "travel_style": "",
+        },
+        raw,
+    )
+    assert normalized["destination"].lower() == "singapore"
+    assert normalized["budget"] > 0
+    assert normalized["start_date"] is not None
+    assert normalized["end_date"] is not None
+
+
+def test_parse_budget_qualitative_medium(agent):
+    assert agent._parse_budget("Budget is medium.") == 3000.0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

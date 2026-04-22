@@ -144,6 +144,8 @@ class UserPreferenceAgent(BaseAgent):
         """Normalize parsed preference data into schema-friendly values."""
         normalized = dict(preference_data or {})
         normalized["destination"] = str(normalized.get("destination") or "").strip()
+        if not normalized["destination"]:
+            normalized["destination"] = self._parse_destination(user_input)
         normalized["start_date"] = self._parse_date_value(normalized.get("start_date"))
         normalized["end_date"] = self._parse_date_value(normalized.get("end_date"))
         normalized["budget"] = self._safe_float(normalized.get("budget"), default=0.0)
@@ -374,6 +376,18 @@ class UserPreferenceAgent(BaseAgent):
             return None
         return max(1, int(m.group(1)))
 
+    def _parse_trip_days(self, text: str) -> Optional[int]:
+        m = re.search(r"\b(\d+)\s*(?:day|days)\b", text, re.IGNORECASE)
+        if not m:
+            return None
+        return max(1, int(m.group(1)))
+
+    def _next_month_start_date(self, today: Optional[date] = None) -> date:
+        base = today or date.today()
+        if base.month == 12:
+            return date(base.year + 1, 1, 1)
+        return date(base.year, base.month + 1, 1)
+
     def _supplement_dates_from_user_text(self, normalized: Dict[str, Any], user_input: str) -> None:
         """Fill missing start/end dates using ISO tokens and common natural-language ranges in the raw text."""
         if normalized.get("start_date") and normalized.get("end_date"):
@@ -399,10 +413,16 @@ class UserPreferenceAgent(BaseAgent):
         if not normalized.get("end_date") and end_guess:
             normalized["end_date"] = end_guess
 
+        if not normalized.get("start_date") and re.search(r"\bnext\s+month\b", user_input, re.IGNORECASE):
+            normalized["start_date"] = self._next_month_start_date()
+
         if normalized.get("start_date") and not normalized.get("end_date"):
             nights = self._parse_trip_nights(user_input)
+            days = self._parse_trip_days(user_input)
             if nights is not None:
                 normalized["end_date"] = normalized["start_date"] + timedelta(days=nights)
+            elif days is not None:
+                normalized["end_date"] = normalized["start_date"] + timedelta(days=max(1, days - 1))
             else:
                 normalized["end_date"] = normalized["start_date"] + timedelta(days=5)
 
@@ -411,15 +431,24 @@ class UserPreferenceAgent(BaseAgent):
 
     def _parse_destination(self, user_input: str) -> str:
         """Extract destination from free text with simple patterns."""
+        stop_lookahead = r"(?=\s+(?:for|with|from|on|in|next|this|during|around)\b|,|\.|\n|$)"
         patterns = [
-            r"\bvisit\s+([A-Za-z\s]+?)(?:,|\.|\n|$)",
-            r"\btrip to\s+([A-Za-z\s]+?)(?:,|\.|\n|$)",
-            r"\bto\s+([A-Za-z\s]+?)(?:,|\.|\n|$)",
+            rf"\btravel\s+to\s+([A-Za-z][A-Za-z\s\-']*?){stop_lookahead}",
+            rf"\bvisit\s+([A-Za-z][A-Za-z\s\-']*?){stop_lookahead}",
+            rf"\btrip\s+to\s+([A-Za-z][A-Za-z\s\-']*?){stop_lookahead}",
+            rf"\bto\s+([A-Za-z][A-Za-z\s\-']*?){stop_lookahead}",
         ]
         for pattern in patterns:
             match = re.search(pattern, user_input, re.IGNORECASE)
             if match:
                 value = match.group(1).strip()
+                # Trim trailing phrase tails: "for 3 days", "with my partner", etc.
+                value = re.split(
+                    r"\b(for|with|from|on|in|next|this|during|around)\b",
+                    value,
+                    maxsplit=1,
+                    flags=re.IGNORECASE,
+                )[0].strip()
                 value = re.sub(r"\s+", " ", value)
                 if value:
                     return value
@@ -455,6 +484,16 @@ class UserPreferenceAgent(BaseAgent):
                 val = self._safe_float(raw, default=0.0)
                 if val > 0:
                     return val
+
+        # Support qualitative budget hints often used in UI prompts.
+        quality_patterns = [
+            (r"\b(?:budget|spending)\s*(?:is\s*)?(?:low|tight|cheap)\b", 1200.0),
+            (r"\b(?:budget|spending)\s*(?:is\s*)?(?:medium|moderate|mid|mid-range)\b", 3000.0),
+            (r"\b(?:budget|spending)\s*(?:is\s*)?(?:high|luxury|premium)\b", 6000.0),
+        ]
+        for pat, guessed_budget in quality_patterns:
+            if re.search(pat, user_input, re.IGNORECASE):
+                return guessed_budget
         return 0.0
 
     def _parse_group_size(self, user_input: str) -> int:
