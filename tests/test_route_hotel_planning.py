@@ -166,6 +166,7 @@ def test_hotel_api_forced_mode_logs_warning_when_api_unavailable(agent, monkeypa
 
 def test_agent_can_fallback_to_global_openai_api_key(monkeypatch):
     monkeypatch.setenv("ROUTE_HOTEL_OPENAI_API_KEY", "")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     monkeypatch.setenv("OPENAI_API_KEY", "global-key-should-be-used")
 
     isolated_agent = RouteHotelPlanningAgent()
@@ -263,6 +264,39 @@ def test_build_dynamic_activities_applies_opening_hours_and_transit(agent):
     assert activities[0]["time"] == "11:00"
     assert activities[0]["travel_minutes_from_previous"] == 0
     assert activities[1]["travel_minutes_from_previous"] > 0
+
+
+def test_meal_selection_respects_budget_prefers_lower_cost(agent):
+    profile = TravelProfile(
+        destination="Test City",
+        start_date=date(2024, 7, 1),
+        end_date=date(2024, 7, 2),
+        budget=300.0,
+        group_size=2,
+        travel_style="general",
+    )
+    restaurants = [
+        type("R", (), {"name": "Luxury A", "average_cost_per_person": 150.0})(),
+        type("R", (), {"name": "Budget B", "average_cost_per_person": 18.0})(),
+        type("R", (), {"name": "Budget C", "average_cost_per_person": 22.0})(),
+        type("R", (), {"name": "Budget D", "average_cost_per_person": 20.0})(),
+    ]
+
+    chosen = []
+    for offset in range(3):
+        r = agent._select_restaurant_for_meal(
+            restaurants=restaurants,
+            travel_profile=profile,
+            day_index=0,
+            meal_offset=offset,
+            num_days=2,
+            already_selected=chosen,
+        )
+        chosen.append(r)
+
+    assert all(r is not None for r in chosen)
+    # With low budget, selections should avoid the luxury option.
+    assert all(getattr(r, "name") != "Luxury A" for r in chosen if r is not None)
 
 
 if __name__ == '__main__':

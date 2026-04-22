@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from dotenv import load_dotenv
 from agents.base_agent import BaseAgent
+from agents.llm_quality import run_with_quality_gate
 from models.schemas import (
     Itinerary, DayItinerary, TravelProfile, SpotList,
     DiningList, PlanningContext
@@ -85,6 +86,7 @@ class RouteHotelPlanningAgent(BaseAgent):
             # auto: try API then fallback, forced: API only, off: deterministic only
             "api_mode": self._normalize_api_mode(os.getenv("ROUTE_HOTEL_API_MODE", "auto"), default="auto"),
         }
+        self._hotel_max_attempts = self._safe_int(os.getenv("ROUTE_HOTEL_MAX_ATTEMPTS", "2"), default=2)
 
     def get_api_config(self, include_secret: bool = False) -> Dict[str, Any]:
         """Return current agent-scoped API configuration for external callers."""
@@ -233,6 +235,7 @@ class RouteHotelPlanningAgent(BaseAgent):
             context with itinerary populated
         """
         try:
+            self.log_execution("Starting route/hotel planning")
             if not self.validate_input(context):
                 context.add_error("Missing required input")
                 return context
@@ -316,10 +319,23 @@ class RouteHotelPlanningAgent(BaseAgent):
 
             if restaurants:
                 for offset, meal_key in enumerate(meal_keys):
-                    restaurant = restaurants[(day_index * len(meal_keys) + offset) % len(restaurants)]
+                    restaurant = self._select_restaurant_for_meal(
+                        restaurants=restaurants,
+                        travel_profile=travel_profile,
+                        day_index=day_index,
+                        meal_offset=offset,
+                        num_days=num_days,
+                        already_selected=selected_restaurants,
+                    )
+                    if restaurant is None:
+                        continue
                     selected_restaurants.append(restaurant)
                     meals[meal_key] = restaurant.name
-                    avg_cost = float(restaurant.average_cost_per_person or 0.0)
+                    avg_cost = self._bounded_meal_cost_per_person(
+                        restaurant=restaurant,
+                        travel_profile=travel_profile,
+                        num_days=num_days,
+                    )
                     meal_cost += avg_cost * max(1, travel_profile.group_size)
 
             accommodation_addresses = self._resolve_accommodation_addresses(
@@ -361,6 +377,10 @@ class RouteHotelPlanningAgent(BaseAgent):
 
             selected_nightly_cost = float(primary_hotel["cost_per_night"] or nightly_hotel_cost)
             day_total_cost = round(activity_cost + meal_cost + selected_nightly_cost, 2)
+            self.log_execution(
+                f"day={day_number} activity_cost={round(activity_cost,2)} meal_cost={round(meal_cost,2)} hotel_cost={round(selected_nightly_cost,2)} total={day_total_cost}",
+                level="info",
+            )
             day_itinerary = DayItinerary(
                 day_number=day_number,
                 date=current_date,
@@ -376,6 +396,81 @@ class RouteHotelPlanningAgent(BaseAgent):
             day_number += 1
 
         return days
+
+    def _bounded_meal_cost_per_person(self, restaurant: object, travel_profile: TravelProfile, num_days: int) -> float:
+        """Bound per-person meal cost to avoid outlier values blowing up totals."""
+        raw = getattr(restaurant, "average_cost_per_person", 0.0) or 0.0
+        try:
+            cost = float(raw)
+        except (TypeError, ValueError):
+            cost = 0.0
+
+        group_size = max(1, int(travel_profile.group_size or 1))
+        per_meal_budget = max(12.0, (float(travel_profile.budget or 0.0) * 0.30 / max(1, num_days)) / group_size / 3.0)
+        # keep some flexibility above target but avoid pathological spikes
+        cap = per_meal_budget * 2.5
+        if cap < 20:
+            cap = 20.0
+        if cost <= 0:
+            return min(per_meal_budget, 25.0)
+        return round(min(cost, cap), 2)
+
+    def _daily_dining_budget(self, travel_profile: TravelProfile, num_days: int) -> float:
+        """
+        Estimate a reasonable daily dining budget for the whole party.
+
+        Uses 30% of total budget for food by default and enforces a floor so
+        very small budgets still have a practical meal plan.
+        """
+        group_size = max(1, int(travel_profile.group_size or 1))
+        per_day_from_total = float(travel_profile.budget or 0.0) * 0.30 / max(1, num_days)
+        floor_per_person_per_day = 45.0
+        return max(per_day_from_total, floor_per_person_per_day * group_size)
+
+    def _select_restaurant_for_meal(
+        self,
+        restaurants: List[object],
+        travel_profile: TravelProfile,
+        day_index: int,
+        meal_offset: int,
+        num_days: int,
+        already_selected: List[object],
+    ) -> Optional[object]:
+        """
+        Pick a restaurant for one meal with budget-awareness.
+
+        We prefer candidates under per-meal budget cap first, then fall back to
+        deterministic rotation if all options are above cap.
+        """
+        if not restaurants:
+            return None
+
+        group_size = max(1, int(travel_profile.group_size or 1))
+        day_budget_total = self._daily_dining_budget(travel_profile, num_days)
+        per_meal_cap_per_person = max(12.0, day_budget_total / max(1, group_size) / 3.0)
+        style = str(travel_profile.travel_style or "").strip().lower()
+        if style == "budget":
+            per_meal_cap_per_person = min(per_meal_cap_per_person, 25.0)
+        elif style in {"general", "family", "culture", "food", "adventure", "relaxation", "shopping"}:
+            per_meal_cap_per_person = min(per_meal_cap_per_person, 40.0)
+        elif style == "luxury":
+            per_meal_cap_per_person = max(per_meal_cap_per_person, 60.0)
+
+        def avg_cost_per_person(r: object) -> float:
+            try:
+                return float(getattr(r, "average_cost_per_person", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        under_cap = [r for r in restaurants if avg_cost_per_person(r) <= per_meal_cap_per_person * 1.20]
+        pool = under_cap or restaurants
+
+        used_names = {str(getattr(r, "name", "")) for r in already_selected}
+        unseen = [r for r in pool if str(getattr(r, "name", "")) not in used_names]
+        candidates = unseen or pool
+
+        base_index = (day_index * 3 + meal_offset) % len(candidates)
+        return candidates[base_index]
 
     def _order_spots_nearest_neighbor(self, spots: List[object]) -> List[object]:
         """Order spots using a greedy nearest-neighbor route heuristic from text locations."""
@@ -635,7 +730,29 @@ class RouteHotelPlanningAgent(BaseAgent):
             " No markdown, no explanation."
         )
 
-        payload = self.fetch_agent_api_response(user_prompt=prompt, system_prompt=SYSTEM_PROMPT, temperature=0.2)
+        def _generate(feedback: Optional[str]) -> dict:
+            merged_prompt = prompt if not feedback else f"{prompt}\n\n{feedback}"
+            payload = self.fetch_agent_api_response(user_prompt=merged_prompt, system_prompt=SYSTEM_PROMPT, temperature=0.2)
+            return payload or {}
+
+        def _validate(payload: dict) -> tuple[bool, str]:
+            parsed_obj = payload.get("hotels", payload.get("items", payload))
+            if not isinstance(parsed_obj, list):
+                return False, "hotels must be a list"
+            if len(parsed_obj) < 1:
+                return False, "need at least one hotel candidate"
+            return True, "ok"
+
+        payload, report = run_with_quality_gate(
+            max_attempts=self._hotel_max_attempts,
+            generate=_generate,
+            validate=_validate,
+        )
+        self._last_quality_report = {"stage": "hotel_candidates", **report}
+        self.log_execution(
+            f"hotel_quality attempts={report['attempts']} passed={report['passed']} reason={report['final_reason']}",
+            level="info",
+        )
         if not payload:
             if str(self._api_config.get("api_mode") or "auto").lower() == "forced":
                 self.log_execution("Hotel API required but unavailable in forced mode", level="warning")

@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - fallback path is tested via mocks
     OpenAI = None  # type: ignore[assignment]
 
 from agents.base_agent import BaseAgent
+from agents.llm_quality import run_with_quality_gate
 from agents.dining_recommendation.prompts import (
     DINING_RECOMMENDATION_PROMPT,
     SYSTEM_PROMPT,
@@ -33,6 +34,7 @@ class DiningRecommendationAgent(BaseAgent):
         )
         self._client: Optional["OpenAI"] = None
         self._model = self._get_deepseek_model()
+        self._max_attempts = max(1, int(os.getenv("DINING_MAX_ATTEMPTS", "2")))
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -45,6 +47,7 @@ class DiningRecommendationAgent(BaseAgent):
             context with dining_list populated
         """
         try:
+            self.log_execution("Starting dining recommendation")
             if not context.travel_profile:
                 context.add_error("Missing travel profile")
                 return context
@@ -55,6 +58,7 @@ class DiningRecommendationAgent(BaseAgent):
 
             travel_profile = context.travel_profile
             restaurants = self._recommend_restaurants(travel_profile)
+            self.log_execution(f"Dining candidate_count={len(restaurants)}")
 
             dining_list = DiningList(
                 restaurants=restaurants,
@@ -128,19 +132,48 @@ class DiningRecommendationAgent(BaseAgent):
             dietary_restrictions=", ".join(travel_profile.dietary_restrictions) or "none",
         )
 
-        response = self._chat_json(
-            client=client,
-            model=model,
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0.7,
-            max_tokens=3000,
+        def _generate(feedback: Optional[str]) -> dict:
+            prompt = user_prompt if not feedback else f"{user_prompt}\n\n{feedback}"
+            return self._chat_json(
+                client=client,
+                model=model,
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=prompt,
+                temperature=0.7,
+                max_tokens=3000,
+            )
+
+        def _validate(response: dict) -> tuple[bool, str]:
+            restaurant_list = response.get("restaurants", response if isinstance(response, list) else [])
+            if not isinstance(restaurant_list, list) or len(restaurant_list) < 6:
+                return False, "need at least 6 restaurants"
+            distinct = {
+                str((r or {}).get("name", "")).strip().lower()
+                for r in restaurant_list
+                if isinstance(r, dict)
+            }
+            if len(distinct) < 4:
+                return False, "restaurant names are too repetitive"
+            return True, "ok"
+
+        response, report = run_with_quality_gate(
+            max_attempts=self._max_attempts,
+            generate=_generate,
+            validate=_validate,
+        )
+        self._last_quality_report = {"stage": "dining_recommendation", **report}
+        logger.info(
+            "dining_quality attempts=%s passed=%s reason=%s",
+            report["attempts"],
+            report["passed"],
+            report["final_reason"],
         )
 
         restaurants = []
         restaurant_list = response.get("restaurants", response if isinstance(response, list) else [])
-
         for r in restaurant_list:
+            if not isinstance(r, dict):
+                continue
             restaurants.append(
                 Restaurant(
                     name=r.get("name", ""),
@@ -148,7 +181,11 @@ class DiningRecommendationAgent(BaseAgent):
                     location=r.get("address", r.get("location", "")),
                     price_range=r.get("price_range", "$$"),
                     rating=r.get("rating", 4.0),
-                    average_cost_per_person=r.get("average_cost_per_person", 0),
+                    average_cost_per_person=self._normalize_cost_per_person(
+                        raw_cost=r.get("average_cost_per_person", 0),
+                        price_range=str(r.get("price_range", "$$") or "$$"),
+                        travel_profile=travel_profile,
+                    ),
                     opening_hours=r.get("opening_hours", ""),
                     reservations_needed=r.get("reservations_needed", False),
                     accessibility_notes=r.get("special_notes"),
@@ -157,9 +194,60 @@ class DiningRecommendationAgent(BaseAgent):
 
         if not restaurants:
             raise ValueError("LLM returned no restaurant recommendations")
-
         logger.info("LLM returned %s restaurant recommendations", len(restaurants))
         return restaurants
+
+    def _normalize_cost_per_person(self, raw_cost: Any, price_range: str, travel_profile: TravelProfile) -> float:
+        """
+        Normalize and bound restaurant per-person cost.
+
+        LLM outputs may contain local currencies (e.g., THB) or extremely large
+        numbers; this guard keeps values within a plausible USD-like range per tier.
+        """
+        cost = self._safe_float(raw_cost, default=0.0)
+        if cost <= 0:
+            return self._default_cost_from_price_range(price_range)
+
+        tier_cap = {
+            "$": 25.0,
+            "$$": 60.0,
+            "$$$": 120.0,
+            "$$$$": 250.0,
+        }.get(price_range.strip(), 80.0)
+
+        # If the value is implausibly high for declared tier, clamp hard.
+        if cost > tier_cap * 4:
+            cost = tier_cap
+
+        # Additional budget-aware clamp to avoid poisoning route/cost summaries.
+        group_size = max(1, int(travel_profile.group_size or 1))
+        duration_days = max(1, (travel_profile.end_date - travel_profile.start_date).days + 1)
+        target_per_person_per_meal = max(10.0, (float(travel_profile.budget or 0.0) * 0.30 / duration_days) / group_size / 3.0)
+        hard_cap = max(tier_cap, target_per_person_per_meal * 2.5)
+        return round(min(cost, hard_cap), 2)
+
+    def _default_cost_from_price_range(self, price_range: str) -> float:
+        defaults = {"$": 12.0, "$$": 28.0, "$$$": 55.0, "$$$$": 120.0}
+        return defaults.get(price_range.strip(), 30.0)
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        if value is None or value == "":
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            for token in ("usd", "sgd", "thb", "$", "¥", "€", "£", ","):
+                text = text.replace(token, "")
+            text = text.strip()
+            try:
+                return float(text)
+            except ValueError:
+                return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _create_deepseek_client(self) -> OpenAI:
         """

@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from agents.base_agent import BaseAgent
+from agents.llm_quality import run_with_quality_gate
 from models.schemas import SpotList, Spot, TravelProfile, PlanningContext
 from agents.spot_recommendation.prompts import (
     SYSTEM_PROMPT,
@@ -41,9 +42,11 @@ class SpotRecommendationAgent(BaseAgent):
             or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
             or "deepseek-chat"
         )
-        self._timeout_seconds = self._safe_float(os.getenv("SPOT_RECOMMENDATION_TIMEOUT", "20"), default=20.0)
-        self._max_retries = max(0, int(self._safe_float(os.getenv("SPOT_RECOMMENDATION_MAX_RETRIES", "1"), default=1.0)))
+        self._timeout_seconds = self._safe_float(os.getenv("SPOT_RECOMMENDATION_TIMEOUT", "45"), default=45.0)
+        self._max_retries = max(0, int(self._safe_float(os.getenv("SPOT_RECOMMENDATION_MAX_RETRIES", "2"), default=2.0)))
+        self._max_attempts = max(1, int(self._safe_float(os.getenv("SPOT_RECOMMENDATION_MAX_ATTEMPTS", "2"), default=2.0)))
         self._client: Optional["OpenAI"] = None
+        self._provider_name = "LLM"
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -56,6 +59,7 @@ class SpotRecommendationAgent(BaseAgent):
             context with spot_list populated
         """
         try:
+            self.log_execution("Starting spot recommendation")
             if not context.travel_profile:
                 context.add_error("Missing travel profile")
                 return context
@@ -119,16 +123,16 @@ class SpotRecommendationAgent(BaseAgent):
 
         if client is not None:
             try:
-                return self._recommend_spots_with_openai(client, travel_profile)
+                return self._recommend_spots_with_llm(client, travel_profile)
             except Exception as exc:
                 self.log_execution(
-                    f"OpenAI recommendation failed, falling back to local suggestions: {exc}",
+                    f"{self._provider_name} recommendation failed, falling back to local suggestions: {exc}",
                     level="warning",
                 )
 
         return self._fallback_spots(travel_profile)
 
-    def _recommend_spots_with_openai(self, client: "OpenAI", travel_profile: TravelProfile) -> List[Spot]:
+    def _recommend_spots_with_llm(self, client: "OpenAI", travel_profile: TravelProfile) -> List[Spot]:
         """Call OpenAI-compatible chat completions API and map result into Spot objects."""
         duration_days = (travel_profile.end_date - travel_profile.start_date).days + 1
         prompt = SPOT_RECOMMENDATION_PROMPT.format(
@@ -139,51 +143,65 @@ class SpotRecommendationAgent(BaseAgent):
             duration_days=duration_days,
         )
 
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        f"{prompt}\n\n"
-                        "Return JSON object only with top-level key 'spots'. "
-                        "Each item requires: name, description, location, category, opening_hours, entrance_fee, "
-                        "rating, duration_hours, best_season, accessibility_notes."
-                    ),
-                },
-            ],
-            temperature=0.3,
-            response_format={"type": "json_object"},
+        def _generate(feedback: Optional[str]) -> Dict[str, Any]:
+            user_content = (
+                f"{prompt}\n\n"
+                "Return JSON object only with top-level key 'spots'. "
+                "Each item requires: name, description, location, category, opening_hours, entrance_fee, "
+                "rating, duration_hours, best_season, accessibility_notes."
+            )
+            if feedback:
+                user_content = f"{user_content}\n\n{feedback}"
+            content = self._call_model_for_json_content(client, user_content)
+            if not content:
+                raise ValueError("Model returned empty spot recommendations")
+            payload = self._parse_json_content(content)
+            if not isinstance(payload, dict):
+                raise ValueError("Spot payload is not an object")
+            return payload
+
+        def _validate(payload: Dict[str, Any]) -> tuple[bool, str]:
+            raw_spots = payload.get("spots", [])
+            if not isinstance(raw_spots, list) or len(raw_spots) < 3:
+                return False, "need at least 3 spots"
+            names = {str(item.get("name") or "").strip().lower() for item in raw_spots if isinstance(item, dict)}
+            if len(names) < min(3, len(raw_spots)):
+                return False, "spot names are too repetitive"
+            return True, "ok"
+
+        payload, report = run_with_quality_gate(
+            max_attempts=self._max_attempts,
+            generate=_generate,
+            validate=_validate,
         )
-
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("Model returned empty spot recommendations")
-        payload = json.loads(content)
+        self._last_quality_report = {"stage": "spot_recommendation", **report}
+        self.log_execution(
+            f"spot_quality attempts={report['attempts']} passed={report['passed']} reason={report['final_reason']}",
+            level="info",
+        )
         raw_spots = payload.get("spots", [])
+        return [self._build_spot(item) for item in raw_spots if isinstance(item, dict)]
 
-        if not raw_spots:
-            raise ValueError("OpenAI returned no spot recommendations")
-
-        return [self._build_spot(item) for item in raw_spots]
+    # Backward-compatible alias for tests/scripts that may still import old name.
+    def _recommend_spots_with_openai(self, client: "OpenAI", travel_profile: TravelProfile) -> List[Spot]:
+        return self._recommend_spots_with_llm(client, travel_profile)
 
     def _get_client(self) -> Optional["OpenAI"]:
         """Create the OpenAI client lazily so tests can run without API dependencies."""
         if self._client is not None:
             return self._client
 
-        api_key = (
-            os.getenv("SPOT_RECOMMENDATION_API_KEY", "").strip()
-            or os.getenv("DEEPSEEK_API_KEY", "").strip()
-            or os.getenv("OPENAI_API_KEY", "").strip()
-        )
-        base_url = (
-            os.getenv("SPOT_RECOMMENDATION_BASE_URL", "").strip()
-            or os.getenv("DEEPSEEK_BASE_URL", "").strip()
-            or os.getenv("OPENAI_BASE_URL", "").strip()
-            or None
-        )
+        # DeepSeek-first priority as requested.
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        spot_key = os.getenv("SPOT_RECOMMENDATION_API_KEY", "").strip()
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        api_key = deepseek_key or spot_key or openai_key
+
+        deepseek_base = os.getenv("DEEPSEEK_BASE_URL", "").strip()
+        spot_base = os.getenv("SPOT_RECOMMENDATION_BASE_URL", "").strip()
+        openai_base = os.getenv("OPENAI_BASE_URL", "").strip()
+        base_url = deepseek_base or spot_base or openai_base or None
+
         if (
             not api_key
             or api_key == "OPENAI_API_KEY"
@@ -192,6 +210,13 @@ class SpotRecommendationAgent(BaseAgent):
             or OpenAI is None
         ):
             return None
+
+        if deepseek_key and api_key == deepseek_key:
+            self._provider_name = "DeepSeek"
+        elif base_url and "deepseek" in base_url.lower():
+            self._provider_name = "DeepSeek"
+        else:
+            self._provider_name = "OpenAI-compatible"
 
         self._client = OpenAI(
             api_key=api_key,
@@ -257,16 +282,120 @@ class SpotRecommendationAgent(BaseAgent):
                 "best_season": "spring",
                 "accessibility_notes": "Paved paths available in main areas.",
             },
+            {
+                "name": f"{destination} Riverfront Promenade",
+                "description": "A waterfront walking route with skyline views and evening ambience.",
+                "location": f"Riverside, {destination}",
+                "category": "scenic",
+                "opening_hours": "All day",
+                "entrance_fee": 0.0,
+                "rating": 4.4,
+                "duration_hours": 1.5,
+                "best_season": "year-round",
+                "accessibility_notes": "Mostly flat and wheelchair friendly.",
+            },
+            {
+                "name": f"{destination} Cultural Quarter",
+                "description": "A compact district with galleries, performance spaces, and local crafts.",
+                "location": f"Cultural District, {destination}",
+                "category": "culture",
+                "opening_hours": "10:00 - 20:00",
+                "entrance_fee": 10.0,
+                "rating": 4.5,
+                "duration_hours": 2.0,
+                "best_season": "autumn",
+                "accessibility_notes": "Accessible sidewalks and public facilities.",
+            },
+            {
+                "name": f"{destination} Botanical Garden",
+                "description": "A peaceful garden area ideal for slow-paced nature exploration.",
+                "location": f"Garden Zone, {destination}",
+                "category": "nature",
+                "opening_hours": "08:00 - 18:00",
+                "entrance_fee": 8.0,
+                "rating": 4.6,
+                "duration_hours": 2.0,
+                "best_season": "spring",
+                "accessibility_notes": "Main paths are paved and accessible.",
+            },
+            {
+                "name": f"{destination} Local Market Street",
+                "description": "A lively market strip for local snacks, crafts, and neighborhood vibe.",
+                "location": f"Market Street, {destination}",
+                "category": "local_life",
+                "opening_hours": "09:00 - 22:00",
+                "entrance_fee": 0.0,
+                "rating": 4.3,
+                "duration_hours": 1.5,
+                "best_season": "year-round",
+                "accessibility_notes": "Can be crowded during peak evening hours.",
+            },
         ]
 
-        recommended_count = min(max((travel_profile.end_date - travel_profile.start_date).days + 4, 6), 10)
-        spots = [self._build_spot(base_spots[index % len(base_spots)]) for index in range(recommended_count)]
+        recommended_count = min(max((travel_profile.end_date - travel_profile.start_date).days + 3, 6), len(base_spots))
+        return [self._build_spot(base_spots[index]) for index in range(recommended_count)]
 
-        for index, spot in enumerate(spots, start=1):
-            if index > len(base_spots):
-                spot.name = f"{spot.name} #{index}"
+    def _call_model_for_json_content(self, client: "OpenAI", user_content: str) -> str:
+        """
+        Call model and return text content; prefer JSON mode but gracefully degrade
+        when provider compatibility is partial.
+        """
+        is_deepseek = self._provider_name.lower().startswith("deepseek")
+        # DeepSeek compatibility is generally better without response_format=json_object.
+        if is_deepseek:
+            self.log_execution("Spot LLM call mode=plain_json provider=DeepSeek", level="info")
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content + "\n\nReturn valid JSON only. No markdown."},
+                ],
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            return response.choices[0].message.content or ""
 
-        return spots
+        try:
+            self.log_execution("Spot LLM call mode=json_object provider=openai_compatible", level="info")
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.3,
+                max_tokens=1000,
+                response_format={"type": "json_object"},
+            )
+            return response.choices[0].message.content or ""
+        except Exception:
+            self.log_execution("Spot LLM call fallback mode=plain_json", level="warning")
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content + "\n\nReturn valid JSON only. No markdown."},
+                ],
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            return response.choices[0].message.content or ""
+
+    def _parse_json_content(self, content: str) -> Any:
+        """Parse JSON response, tolerating markdown code fences."""
+        text = content.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            start_obj = text.find("{")
+            end_obj = text.rfind("}")
+            if start_obj != -1 and end_obj > start_obj:
+                return json.loads(text[start_obj : end_obj + 1])
+            raise
 
     def _spot_response_schema(self) -> Dict[str, Any]:
         """JSON schema used to keep the model output stable and parseable."""

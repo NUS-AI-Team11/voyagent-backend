@@ -6,6 +6,7 @@ import json
 import os
 from openai import OpenAI
 from agents.base_agent import BaseAgent
+from agents.llm_quality import run_with_quality_gate
 from models.schemas import (
     Itinerary, FinalHandbook, CostBreakdown, PlanningContext,
     OptimizationRecommendation, TravelProfile
@@ -34,6 +35,7 @@ class CostOptimizationAgent(BaseAgent):
             or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
             or "deepseek-chat"
         )
+        self._max_attempts = max(1, int(os.getenv("COST_OPTIMIZATION_MAX_ATTEMPTS", "2")))
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -46,14 +48,37 @@ class CostOptimizationAgent(BaseAgent):
             context with final_handbook populated
         """
         try:
+            self.log_execution("Starting cost optimization")
+            self._last_quality_report = {
+                "stage": "cost_optimization",
+                "attempts": 0,
+                "passed": True,
+                "final_reason": "initialized",
+                "checks": [],
+            }
             if not self.validate_input(context):
                 context.add_error("Missing required input")
+                self._last_quality_report = {
+                    "stage": "cost_optimization",
+                    "attempts": 0,
+                    "passed": False,
+                    "final_reason": "missing_required_input",
+                    "checks": [],
+                }
                 return context
 
             itinerary = context.itinerary
             travel_profile = context.travel_profile
 
             cost_breakdown = self._analyze_costs(itinerary)
+            self.log_execution(
+                "cost_breakdown "
+                f"acc={cost_breakdown.accommodation} trans={cost_breakdown.transportation} "
+                f"dining={cost_breakdown.dining} attr={cost_breakdown.attractions} "
+                f"shop={cost_breakdown.shopping} misc={cost_breakdown.miscellaneous} "
+                f"cont={cost_breakdown.contingency} total={cost_breakdown.total}",
+                level="info",
+            )
 
             recommendations = self._generate_recommendations(
                 cost_breakdown,
@@ -207,6 +232,13 @@ class CostOptimizationAgent(BaseAgent):
             list of OptimizationRecommendation objects
         """
         if cost_breakdown.total <= budget:
+            self._last_quality_report = {
+                "stage": "cost_optimization",
+                "attempts": 0,
+                "passed": True,
+                "final_reason": "within_budget_no_llm_needed",
+                "checks": [],
+            }
             return []
 
         # Build candidates: one per category with non-zero spend
@@ -225,6 +257,15 @@ class CostOptimizationAgent(BaseAgent):
         # Keep top 3 by potential_savings before calling LLM
         candidates.sort(key=lambda c: c["potential_savings"], reverse=True)
         top = candidates[:3]
+        if not top:
+            self._last_quality_report = {
+                "stage": "cost_optimization",
+                "attempts": 0,
+                "passed": True,
+                "final_reason": "no_cost_categories_for_optimization",
+                "checks": [],
+            }
+            return []
 
         suggestions = self._fetch_suggestions(top, cost_breakdown, budget, travel_profile)
 
@@ -267,20 +308,50 @@ class CostOptimizationAgent(BaseAgent):
 
         try:
             client = self._get_openai_client()
-            response = client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.4,
-                response_format={"type": "json_object"},
+
+            def _generate(feedback):
+                prompt = user_prompt if not feedback else f"{user_prompt}\n\n{feedback}"
+                response = client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.4,
+                    response_format={"type": "json_object"},
+                )
+                raw = response.choices[0].message.content
+                parsed = json.loads(raw)
+                return parsed
+
+            wanted_categories = {c["category"] for c in candidates}
+
+            def _validate(parsed):
+                items = parsed if isinstance(parsed, list) else parsed.get("suggestions", parsed.get("items", []))
+                if not isinstance(items, list):
+                    return False, "suggestions should be a list"
+                mapped = {
+                    item.get("category"): item.get("suggestion")
+                    for item in items
+                    if isinstance(item, dict)
+                }
+                covered = sum(1 for k in wanted_categories if mapped.get(k))
+                if covered == 0:
+                    return False, "no useful category suggestions"
+                return True, "ok"
+
+            parsed, report = run_with_quality_gate(
+                max_attempts=self._max_attempts,
+                generate=_generate,
+                validate=_validate,
             )
-            raw = response.choices[0].message.content
-            # LLM returns {"suggestions": [...]} or a bare array — handle both
-            parsed = json.loads(raw)
+            self._last_quality_report = {"stage": "cost_optimization", **report}
+            self.log_execution(
+                f"cost_quality attempts={report['attempts']} passed={report['passed']} reason={report['final_reason']}",
+                level="info",
+            )
             items = parsed if isinstance(parsed, list) else parsed.get("suggestions", parsed.get("items", []))
-            return {item["category"]: item["suggestion"] for item in items if "category" in item}
+            return {item["category"]: item["suggestion"] for item in items if isinstance(item, dict) and "category" in item}
         except Exception as e:
             self.log_execution(f"LLM suggestion fetch failed: {e}", level="warning")
             return {}

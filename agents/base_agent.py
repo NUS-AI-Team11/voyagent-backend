@@ -114,6 +114,7 @@ class BaseAgent(ABC):
                 "elapsed_ms": elapsed_ms,
                 "timestamp": datetime.now().isoformat(),
                 "error": error,
+                "quality": getattr(self, "_last_quality_report", None),
             }
         )
 

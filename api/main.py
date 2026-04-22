@@ -3,6 +3,7 @@ FastAPI application: full HTTP surface for the VoyageAgent travel planning backe
 """
 
 import json
+import logging
 import os
 import queue
 import threading
@@ -33,6 +34,38 @@ from orchestrator.workflow import TravelPlanningWorkflow
 load_dotenv()
 
 API_PREFIX = "/api/v1"
+
+
+def _setup_application_logging() -> None:
+    """
+    Ensure app/agent logs are visible under uvicorn.
+
+    Uvicorn manages its own loggers; this sets root/app logger levels so
+    BaseAgent.log_execution(info) messages are not hidden.
+    """
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper().strip()
+    level = getattr(logging, level_name, logging.INFO)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    if not root_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        root_logger.addHandler(handler)
+
+    # Make key app logger namespaces explicit at the configured level.
+    for logger_name in (
+        "orchestrator.workflow",
+        "RouteHotelPlanningAgent",
+        "SpotRecommendationAgent",
+        "UserPreferenceAgent",
+        "DiningRecommendationAgent",
+        "CostOptimizationAgent",
+    ):
+        logging.getLogger(logger_name).setLevel(level)
+
+
+_setup_application_logging()
 
 
 @asynccontextmanager

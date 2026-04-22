@@ -11,6 +11,7 @@ from datetime import datetime, date, timedelta
 from openai import OpenAI
 
 from agents.base_agent import BaseAgent
+from agents.llm_quality import run_with_quality_gate
 from models.schemas import TravelProfile, PlanningContext
 from agents.user_preference.prompts import (
     SYSTEM_PROMPT,
@@ -39,6 +40,7 @@ class UserPreferenceAgent(BaseAgent):
             or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
             or "deepseek-chat"
         )
+        self._max_attempts = max(1, self._safe_int(os.getenv("USER_PREFERENCE_MAX_ATTEMPTS", "2"), default=2))
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -51,6 +53,7 @@ class UserPreferenceAgent(BaseAgent):
             context with travel_profile populated
         """
         try:
+            self.log_execution("Starting user preference extraction")
             user_input = context.metadata.get('user_input', '')
 
             if not user_input:
@@ -122,21 +125,43 @@ class UserPreferenceAgent(BaseAgent):
             raise ValueError("OPENAI_API_KEY not configured")
 
         prompt = USER_PREFERENCE_EXTRACTION_PROMPT.format(user_input=user_input)
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
+
+        def _generate(feedback: Optional[str]) -> Dict[str, Any]:
+            user_content = prompt if not feedback else f"{prompt}\n\n{feedback}"
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("LLM returned empty response")
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM response is not a JSON object")
+            return parsed
+
+        def _validate(candidate: Dict[str, Any]) -> tuple[bool, str]:
+            destination = str(candidate.get("destination") or "").strip()
+            # Let date/budget repair happen later, but ensure we at least receive a destination-like structure.
+            if not destination:
+                return False, "missing destination"
+            return True, "ok"
+
+        parsed, report = run_with_quality_gate(
+            max_attempts=self._max_attempts,
+            generate=_generate,
+            validate=_validate,
         )
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("LLM returned empty response")
-        parsed = json.loads(content)
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM response is not a JSON object")
+        self._last_quality_report = {"stage": "user_preference_extract", **report}
+        self.log_execution(
+            f"user_preference_quality attempts={report['attempts']} passed={report['passed']} reason={report['final_reason']}",
+            level="info",
+        )
         return parsed
 
     def _extract_preferences_fallback(self, user_input: str) -> Dict[str, Any]:
@@ -443,6 +468,14 @@ class UserPreferenceAgent(BaseAgent):
 
         if normalized.get("end_date") and not normalized.get("start_date"):
             normalized["start_date"] = normalized["end_date"] - timedelta(days=5)
+
+        # Last-resort fallback for realistic prompts like "4 days in Bangkok" without explicit dates.
+        if not normalized.get("start_date") and not normalized.get("end_date"):
+            days = self._parse_trip_days(user_input)
+            if days is not None:
+                start = date.today() + timedelta(days=14)
+                normalized["start_date"] = start
+                normalized["end_date"] = start + timedelta(days=max(1, days - 1))
 
     def _parse_destination(self, user_input: str) -> str:
         """Extract destination from free text with simple patterns."""

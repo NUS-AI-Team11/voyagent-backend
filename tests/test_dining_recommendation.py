@@ -108,5 +108,22 @@ def test_mock_recommendation_for_non_tokyo_uses_destination_name(agent):
     assert any("Singapore" in (r.location or "") or "Singapore" in (r.name or "") for r in restaurants)
 
 
+def test_normalize_cost_per_person_clamps_outlier(agent):
+    profile = TravelProfile(
+        destination="Bangkok",
+        start_date=date(2024, 6, 1),
+        end_date=date(2024, 6, 4),
+        budget=1200,
+        group_size=1,
+        travel_style="budget",
+    )
+    normalized = agent._normalize_cost_per_person(
+        raw_cost="18850",
+        price_range="$$",
+        travel_profile=profile,
+    )
+    assert normalized < 200
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

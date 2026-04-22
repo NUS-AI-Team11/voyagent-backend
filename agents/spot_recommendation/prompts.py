@@ -19,7 +19,7 @@ Interests: {interests}
 Group size: {group_size}
 Duration (days): {duration_days}
 
-Please recommend 10-15 attractions, each including:
+Please recommend 6-8 attractions, each including:
 1. Name
 2. Description
 3. Location / address
@@ -31,7 +31,10 @@ Please recommend 10-15 attractions, each including:
 9. Best season to visit
 10. Accessibility notes
 
-Return a JSON list.
+Return JSON object only:
+{{
+  "spots": [ ... ]
+}}
 """
 
 SPOT_FILTERING_PROMPT = """

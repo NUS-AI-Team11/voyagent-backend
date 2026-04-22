@@ -198,5 +198,26 @@ def test_parse_budget_qualitative_medium(agent):
     assert agent._parse_budget("Budget is medium.") == 3000.0
 
 
+def test_supplement_dates_from_days_only_prompt(agent):
+    raw = (
+        "Bangkok solo budget food trip. I'm a solo traveler planning 4 days in Bangkok "
+        "with a total budget under 1,200 USD."
+    )
+    normalized = agent._normalize_preference_data(
+        {
+            "destination": "Bangkok",
+            "start_date": None,
+            "end_date": None,
+            "budget": 1200,
+            "group_size": 1,
+            "travel_style": "food",
+        },
+        raw,
+    )
+    assert normalized["start_date"] is not None
+    assert normalized["end_date"] is not None
+    assert (normalized["end_date"] - normalized["start_date"]).days == 3
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
