@@ -6,9 +6,12 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional, Any, Dict
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - fallback path is tested via mocks
+    OpenAI = None  # type: ignore[assignment]
 
 from agents.base_agent import BaseAgent
 from agents.dining_recommendation.prompts import (
@@ -28,6 +31,8 @@ class DiningRecommendationAgent(BaseAgent):
             name="Dining Recommendation Agent",
             description="Recommends restaurants and dining options matching user dietary preferences and budget"
         )
+        self._client: Optional["OpenAI"] = None
+        self._model = self._get_deepseek_model()
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -95,7 +100,7 @@ class DiningRecommendationAgent(BaseAgent):
 
     def _recommend_restaurants_llm(self, travel_profile: TravelProfile) -> List[Restaurant]:
         """
-        Use DeepSeek to recommend restaurants.
+        Use an OpenAI-compatible LLM endpoint to recommend restaurants.
 
         Args:
             travel_profile: user travel information
@@ -104,7 +109,7 @@ class DiningRecommendationAgent(BaseAgent):
             list of recommended Restaurant objects
         """
         client = self._create_deepseek_client()
-        model = self._get_deepseek_model()
+        model = self._model
 
         start_date = travel_profile.start_date
         end_date = travel_profile.end_date
@@ -112,7 +117,7 @@ class DiningRecommendationAgent(BaseAgent):
             start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
         if isinstance(end_date, str):
             end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
-        duration_days = (end_date - start_date).days if start_date and end_date else 7
+        duration_days = (end_date - start_date).days + 1 if start_date and end_date else 7
 
         user_prompt = DINING_RECOMMENDATION_PROMPT.format(
             destination=travel_profile.destination,
@@ -157,22 +162,71 @@ class DiningRecommendationAgent(BaseAgent):
         return restaurants
 
     def _create_deepseek_client(self) -> OpenAI:
-        """Create an OpenAI-compatible client for DeepSeek."""
-        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-        if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY not configured in .env file")
+        """
+        Backward-compatible name: create an OpenAI-compatible client.
+        Resolution order:
+        1) DINING_OPENAI_API_KEY
+        2) OPENAI_API_KEY
+        3) DEEPSEEK_API_KEY
+        """
+        if self._client is not None:
+            return self._client
 
-        base_url = os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com"
-        return OpenAI(api_key=api_key, base_url=base_url)
+        if OpenAI is None:
+            raise ValueError("openai package is not installed")
+
+        api_key, key_source = self._resolve_api_key()
+        if not api_key:
+            raise ValueError("No API key configured for dining agent")
+
+        base_url = self._resolve_base_url(key_source)
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        return self._client
 
     def _get_deepseek_model(self) -> str:
-        """Get the configured DeepSeek model, normalized for the API."""
-        model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
+        """
+        Backward-compatible name: get configured model for dining agent.
+        Resolution order:
+        1) DINING_OPENAI_MODEL
+        2) OPENAI_MODEL
+        3) DEEPSEEK_MODEL
+        """
+        model = (
+            os.getenv("DINING_OPENAI_MODEL", "").strip()
+            or os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
+            or os.getenv("OPENAI_MODEL", "").strip()
+        )
         aliases = {
             "DeepSeek-V3.2": "deepseek-chat",
             "deepseek-v3.2": "deepseek-chat",
         }
         return aliases.get(model, model or "deepseek-chat")
+
+    def _resolve_api_key(self) -> tuple[str, str]:
+        """Resolve key and key source label for endpoint routing."""
+        candidates = [
+            ("DINING_OPENAI_API_KEY", os.getenv("DINING_OPENAI_API_KEY", "").strip()),
+            ("DEEPSEEK_API_KEY", os.getenv("DEEPSEEK_API_KEY", "").strip()),
+            ("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "").strip()),
+        ]
+        for source, key in candidates:
+            if key and key not in {"OPENAI_API_KEY", "DEEPSEEK_API_KEY"} and not key.startswith("REPLACE_WITH_"):
+                return key, source
+        return "", ""
+
+    def _resolve_base_url(self, key_source: str) -> Optional[str]:
+        """Choose the appropriate base URL for the selected provider."""
+        # Highest priority: explicit dining-specific endpoint, then generic OpenAI-compatible endpoint.
+        explicit = (
+            os.getenv("DINING_OPENAI_BASE_URL", "").strip()
+            or os.getenv("OPENAI_BASE_URL", "").strip()
+        )
+        if explicit:
+            return explicit
+        if key_source == "DEEPSEEK_API_KEY":
+            return os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com"
+        # None means official OpenAI endpoint from SDK default.
+        return None
 
     def _chat_json(
         self,
@@ -383,7 +437,34 @@ class DiningRecommendationAgent(BaseAgent):
 
         if destination in restaurants_db:
             return restaurants_db[destination]
-        return restaurants_db["Tokyo"]
+        return self._build_destination_fallback_restaurants(destination)
+
+    def _build_destination_fallback_restaurants(self, destination: str) -> List[Restaurant]:
+        """Generate destination-consistent fallback restaurants when no city dataset exists."""
+        city = destination.strip() or "the destination"
+        templates: List[Dict[str, Any]] = [
+            {"name": f"{city} Hawker Center", "cuisine": "Local Street Food", "price": "$", "cost": 12.0, "rating": 4.4},
+            {"name": f"{city} Heritage Kitchen", "cuisine": "Traditional Cuisine", "price": "$$", "cost": 28.0, "rating": 4.5},
+            {"name": f"{city} Riverside Grill", "cuisine": "Grill & Seafood", "price": "$$$", "cost": 55.0, "rating": 4.3},
+            {"name": f"{city} Vegetarian Table", "cuisine": "Vegetarian / Vegan", "price": "$$", "cost": 24.0, "rating": 4.2},
+            {"name": f"{city} Night Market Bites", "cuisine": "Night Market Local Bites", "price": "$", "cost": 10.0, "rating": 4.1},
+            {"name": f"{city} Signature Tasting", "cuisine": "Fine Dining", "price": "$$$$", "cost": 120.0, "rating": 4.6},
+        ]
+        restaurants: List[Restaurant] = []
+        for idx, t in enumerate(templates, start=1):
+            restaurants.append(
+                Restaurant(
+                    name=t["name"],
+                    cuisine_type=t["cuisine"],
+                    location=f"District {idx}, {city}",
+                    price_range=t["price"],
+                    rating=float(t["rating"]),
+                    average_cost_per_person=float(t["cost"]),
+                    opening_hours="10:00 - 22:00",
+                    reservations_needed=t["price"] in {"$$$", "$$$$"},
+                )
+            )
+        return restaurants
 
     def _filter_by_dietary_restrictions(self, restaurants: List[Restaurant], restrictions: List[str]) -> List[Restaurant]:
         """Filter restaurants based on dietary restrictions."""

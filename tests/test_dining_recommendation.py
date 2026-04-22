@@ -83,5 +83,30 @@ def test_recommend_restaurants_llm_uses_deepseek_response(agent):
     assert restaurants[0].cuisine_type == "Japanese"
 
 
+def test_resolve_api_key_prefers_deepseek_key(agent, monkeypatch):
+    monkeypatch.delenv("DINING_OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    key, source = agent._resolve_api_key()
+    assert key == "sk-deepseek-test"
+    assert source == "DEEPSEEK_API_KEY"
+
+
+def test_mock_recommendation_for_non_tokyo_uses_destination_name(agent):
+    profile = TravelProfile(
+        destination="Singapore",
+        start_date=date(2024, 6, 1),
+        end_date=date(2024, 6, 3),
+        budget=3000,
+        group_size=2,
+        travel_style="food",
+        dietary_restrictions=[],
+    )
+    restaurants = agent._recommend_restaurants_mock(profile)
+    assert restaurants
+    assert any("Singapore" in (r.location or "") or "Singapore" in (r.name or "") for r in restaurants)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

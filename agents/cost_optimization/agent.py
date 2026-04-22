@@ -28,6 +28,12 @@ class CostOptimizationAgent(BaseAgent):
         # Lazy init: do not require OPENAI_API_KEY when this agent is only inspected
         # (e.g. metadata endpoints that list workflow steps/agents).
         self._client = None
+        self._model = (
+            os.getenv("COST_OPTIMIZATION_OPENAI_MODEL", "").strip()
+            or os.getenv("DEEPSEEK_MODEL", "").strip()
+            or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
+            or "deepseek-chat"
+        )
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -143,9 +149,12 @@ class CostOptimizationAgent(BaseAgent):
 
         for day in itinerary.days:
             # Accommodation cost for the night
+            known_day_cost = 0.0
             if day.accommodation:
                 cost_per_night = day.accommodation.get("cost_per_night", 0.0)
-                totals["accommodation"] += float(cost_per_night or 0.0)
+                accommodation_cost = float(cost_per_night or 0.0)
+                totals["accommodation"] += accommodation_cost
+                known_day_cost += accommodation_cost
 
             # Activity costs — map category → bucket
             for activity in day.activities:
@@ -155,6 +164,14 @@ class CostOptimizationAgent(BaseAgent):
                 raw_category = str(activity.get("category", "")).lower().strip()
                 bucket = self._CATEGORY_MAP.get(raw_category, "miscellaneous")
                 totals[bucket] += cost
+                known_day_cost += cost
+
+            # Route agent already computes per-day total that includes meals/transport buffers.
+            # Backfill any unclassified remainder so cost summary matches itinerary totals better.
+            day_total = float(getattr(day, "total_estimated_cost", 0.0) or 0.0)
+            remainder = round(day_total - known_day_cost, 2)
+            if remainder > 0:
+                totals["dining"] += remainder
 
         subtotal = sum(totals.values())
         contingency = round(subtotal * 0.05, 2)
@@ -251,7 +268,7 @@ class CostOptimizationAgent(BaseAgent):
         try:
             client = self._get_openai_client()
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=self._model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -272,8 +289,18 @@ class CostOptimizationAgent(BaseAgent):
         """Build OpenAI client only when LLM suggestions are actually requested."""
         if self._client is not None:
             return self._client
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        if not api_key:
+        api_key = (
+            os.getenv("COST_OPTIMIZATION_API_KEY", "").strip()
+            or os.getenv("DEEPSEEK_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+        if (not api_key) or api_key in {"OPENAI_API_KEY", "DEEPSEEK_API_KEY"} or api_key.startswith("REPLACE_WITH_"):
             raise ValueError("OPENAI_API_KEY is not configured")
-        self._client = OpenAI(api_key=api_key)
+        base_url = (
+            os.getenv("COST_OPTIMIZATION_BASE_URL", "").strip()
+            or os.getenv("DEEPSEEK_BASE_URL", "").strip()
+            or os.getenv("OPENAI_BASE_URL", "").strip()
+            or None
+        )
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
         return self._client

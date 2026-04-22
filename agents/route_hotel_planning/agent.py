@@ -6,8 +6,6 @@ import os
 import json
 import re
 from pathlib import Path
-import urllib.request
-import urllib.error
 from dotenv import load_dotenv
 from agents.base_agent import BaseAgent
 from models.schemas import (
@@ -23,6 +21,7 @@ from agents.route_hotel_planning.prompts import (
 )
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timedelta
+from openai import OpenAI
 
 
 class RouteHotelPlanningAgent(BaseAgent):
@@ -60,13 +59,27 @@ class RouteHotelPlanningAgent(BaseAgent):
             name="Route & Hotel Planning Agent",
             description="Plans a complete day-by-day itinerary and hotel arrangement based on spot and restaurant recommendations"
         )
-        # Agent-scoped key only: do not read OPENAI_API_KEY here.
-        self.route_hotel_api_key = os.getenv("ROUTE_HOTEL_OPENAI_API_KEY", "")
-        self.route_hotel_model = os.getenv("ROUTE_HOTEL_OPENAI_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
+        # Prefer dedicated key, then DeepSeek, then global OpenAI key.
+        self.route_hotel_api_key = (
+            os.getenv("ROUTE_HOTEL_OPENAI_API_KEY", "").strip()
+            or os.getenv("DEEPSEEK_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+        self.route_hotel_model = (
+            os.getenv("ROUTE_HOTEL_OPENAI_MODEL", "").strip()
+            or os.getenv("DEEPSEEK_MODEL", "").strip()
+            or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
+            or "deepseek-chat"
+        )
         self._api_config: Dict[str, Any] = {
             "api_key": self.route_hotel_api_key,
             "model": self.route_hotel_model,
-            "base_url": os.getenv("ROUTE_HOTEL_OPENAI_BASE_URL", "https://api.openai.com/v1/responses"),
+            "base_url": (
+                os.getenv("ROUTE_HOTEL_OPENAI_BASE_URL", "").strip()
+                or os.getenv("DEEPSEEK_BASE_URL", "").strip()
+                or os.getenv("OPENAI_BASE_URL", "").strip()
+                or "https://api.deepseek.com"
+            ),
             "timeout_seconds": self._safe_int(os.getenv("ROUTE_HOTEL_OPENAI_TIMEOUT", "20"), default=20),
             "temperature": self._safe_float(os.getenv("ROUTE_HOTEL_OPENAI_TEMPERATURE", "0.2"), default=0.2),
             # auto: try API then fallback, forced: API only, off: deterministic only
@@ -114,9 +127,23 @@ class RouteHotelPlanningAgent(BaseAgent):
     def reset_api_config(self) -> Dict[str, Any]:
         """Reset runtime API config from environment values."""
         self._api_config = {
-            "api_key": os.getenv("ROUTE_HOTEL_OPENAI_API_KEY", ""),
-            "model": os.getenv("ROUTE_HOTEL_OPENAI_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini")),
-            "base_url": os.getenv("ROUTE_HOTEL_OPENAI_BASE_URL", "https://api.openai.com/v1/responses"),
+            "api_key": (
+                os.getenv("ROUTE_HOTEL_OPENAI_API_KEY", "").strip()
+                or os.getenv("DEEPSEEK_API_KEY", "").strip()
+                or os.getenv("OPENAI_API_KEY", "").strip()
+            ),
+            "model": (
+                os.getenv("ROUTE_HOTEL_OPENAI_MODEL", "").strip()
+                or os.getenv("DEEPSEEK_MODEL", "").strip()
+                or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
+                or "deepseek-chat"
+            ),
+            "base_url": (
+                os.getenv("ROUTE_HOTEL_OPENAI_BASE_URL", "").strip()
+                or os.getenv("DEEPSEEK_BASE_URL", "").strip()
+                or os.getenv("OPENAI_BASE_URL", "").strip()
+                or "https://api.deepseek.com"
+            ),
             "timeout_seconds": self._safe_int(os.getenv("ROUTE_HOTEL_OPENAI_TIMEOUT", "20"), default=20),
             "temperature": self._safe_float(os.getenv("ROUTE_HOTEL_OPENAI_TEMPERATURE", "0.2"), default=0.2),
             "api_mode": self._normalize_api_mode(os.getenv("ROUTE_HOTEL_API_MODE", "auto"), default="auto"),
@@ -171,30 +198,27 @@ class RouteHotelPlanningAgent(BaseAgent):
         if not self.is_api_enabled():
             return None
 
-        request_temperature = self._api_config.get("temperature", 0.2) if temperature is None else float(temperature)
-        body = {
-            "model": self._api_config.get("model", self.route_hotel_model),
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": max(0.0, min(1.0, request_temperature)),
-        }
-
-        request = urllib.request.Request(
-            url=self._api_config.get("base_url", "https://api.openai.com/v1/responses"),
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._api_config.get('api_key', '')}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-
         try:
-            with urllib.request.urlopen(request, timeout=int(self._api_config.get("timeout_seconds", 20))) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            request_temperature = self._api_config.get("temperature", 0.2) if temperature is None else float(temperature)
+            client = OpenAI(
+                api_key=self._api_config.get("api_key", ""),
+                base_url=self._api_config.get("base_url", "https://api.deepseek.com"),
+                timeout=float(self._api_config.get("timeout_seconds", 20)),
+            )
+            resp = client.chat.completions.create(
+                model=self._api_config.get("model", self.route_hotel_model),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=max(0.0, min(1.0, request_temperature)),
+                response_format={"type": "json_object"},
+            )
+            content = resp.choices[0].message.content
+            if not content:
+                return None
+            return json.loads(content)
+        except (TimeoutError, json.JSONDecodeError, ValueError, Exception) as exc:
             self.log_execution(f"Route-hotel API request failed: {str(exc)}", level="warning")
             return None
 
@@ -335,7 +359,8 @@ class RouteHotelPlanningAgent(BaseAgent):
                 "hotel_candidates": hotel_candidates,
             }
 
-            day_total_cost = round(activity_cost + meal_cost + nightly_hotel_cost, 2)
+            selected_nightly_cost = float(primary_hotel["cost_per_night"] or nightly_hotel_cost)
+            day_total_cost = round(activity_cost + meal_cost + selected_nightly_cost, 2)
             day_itinerary = DayItinerary(
                 day_number=day_number,
                 date=current_date,
@@ -605,8 +630,8 @@ class RouteHotelPlanningAgent(BaseAgent):
             f"Group size: {group_size}\n"
             f"Target nightly budget: {base_nightly_cost}\n"
             f"Preferred areas:\n{address_text}\n\n"
-            "Return ONLY JSON array with 3 hotel objects."
-            " Each item must include: name, address, cost_per_night, rating."
+            "Return ONLY JSON object with key 'hotels' as an array of 3 hotel objects."
+            " Each hotel item must include: name, address, cost_per_night, rating."
             " No markdown, no explanation."
         )
 
@@ -616,12 +641,7 @@ class RouteHotelPlanningAgent(BaseAgent):
                 self.log_execution("Hotel API required but unavailable in forced mode", level="warning")
             return None
 
-        output_text = self._extract_responses_output_text(payload)
-        if not output_text:
-            self.log_execution("Hotel API returned empty output text, using fallback", level="warning")
-            return None
-
-        parsed = self._parse_json_block(output_text)
+        parsed = payload.get("hotels", payload.get("items", payload))
         if not isinstance(parsed, list):
             self.log_execution("Hotel API output is not a JSON list, using fallback", level="warning")
             return None

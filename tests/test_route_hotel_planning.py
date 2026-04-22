@@ -3,7 +3,6 @@ Tests for Route & Hotel Planning Agent.
 """
 
 import pytest
-import urllib.request
 from models.schemas import TravelProfile, SpotList, Spot, DiningList, PlanningContext
 from agents.route_hotel_planning.agent import RouteHotelPlanningAgent
 from datetime import date
@@ -11,7 +10,9 @@ from datetime import date
 
 @pytest.fixture
 def agent():
-    return RouteHotelPlanningAgent()
+    instance = RouteHotelPlanningAgent()
+    instance.configure_api(api_mode="off")
+    return instance
 
 
 @pytest.fixture
@@ -86,23 +87,34 @@ def test_independent_api_config_interface(agent):
 
 
 def test_fetch_agent_api_response_success_with_mock(agent, monkeypatch):
-    agent.configure_api(api_key="test-key", base_url="https://example.com/v1/responses", api_mode="auto")
+    agent.configure_api(api_key="test-key", base_url="https://example.com", api_mode="auto")
 
-    class DummyResponse:
-        def __enter__(self):
-            return self
+    class FakeCompletions:
+        @staticmethod
+        def create(**kwargs):
+            return type(
+                "Resp",
+                (),
+                {
+                    "choices": [
+                        type(
+                            "Choice",
+                            (),
+                            {"message": type("Msg", (), {"content": '{"hotels": []}'})()},
+                        )()
+                    ]
+                },
+            )()
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
+    class FakeOpenAI:
+        def __init__(self, *args, **kwargs):
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
 
-        def read(self):
-            return b'{"output_text": "[]"}'
-
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: DummyResponse())
+    monkeypatch.setattr("agents.route_hotel_planning.agent.OpenAI", FakeOpenAI)
 
     payload = agent.fetch_agent_api_response(user_prompt="hello")
     assert isinstance(payload, dict)
-    assert payload.get("output_text") == "[]"
+    assert payload.get("hotels") == []
 
 
 def test_fetch_agent_api_response_off_mode_skips_http(agent, monkeypatch):
@@ -110,11 +122,12 @@ def test_fetch_agent_api_response_off_mode_skips_http(agent, monkeypatch):
 
     called = {"value": False}
 
-    def _should_not_call(*args, **kwargs):
-        called["value"] = True
-        raise AssertionError("urlopen should not be called when api_mode=off")
+    class FakeOpenAI:
+        def __init__(self, *args, **kwargs):
+            called["value"] = True
+            raise AssertionError("OpenAI should not be created when api_mode=off")
 
-    monkeypatch.setattr(urllib.request, "urlopen", _should_not_call)
+    monkeypatch.setattr("agents.route_hotel_planning.agent.OpenAI", FakeOpenAI)
 
     payload = agent.fetch_agent_api_response(user_prompt="hello")
     assert payload is None
@@ -151,13 +164,13 @@ def test_hotel_api_forced_mode_logs_warning_when_api_unavailable(agent, monkeypa
     assert any(level == "warning" and "forced mode" in message for message, level in logs)
 
 
-def test_agent_isolation_does_not_read_global_openai_api_key(monkeypatch):
+def test_agent_can_fallback_to_global_openai_api_key(monkeypatch):
     monkeypatch.setenv("ROUTE_HOTEL_OPENAI_API_KEY", "")
-    monkeypatch.setenv("OPENAI_API_KEY", "global-key-should-not-be-used")
+    monkeypatch.setenv("OPENAI_API_KEY", "global-key-should-be-used")
 
     isolated_agent = RouteHotelPlanningAgent()
-    assert isolated_agent.get_api_config(include_secret=True)["api_key"] == ""
-    assert isolated_agent.is_api_enabled() is False
+    assert isolated_agent.get_api_config(include_secret=True)["api_key"] == "global-key-should-be-used"
+    assert isolated_agent.is_api_enabled() is True
 
 
 def test_process_without_route_hotel_api_key_still_generates_itinerary(sample_context, monkeypatch):

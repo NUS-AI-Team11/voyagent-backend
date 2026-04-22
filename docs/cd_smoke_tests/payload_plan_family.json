@@ -1,0 +1,5 @@
+{
+  "user_input": "Plan a 5-day family trip in Tokyo for 2 adults and 1 child. We prefer kid-friendly attractions, less walking, and nearby dining options.",
+  "fail_fast": true,
+  "print_summary": false
+}

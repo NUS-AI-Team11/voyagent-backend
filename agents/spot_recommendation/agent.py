@@ -35,7 +35,12 @@ class SpotRecommendationAgent(BaseAgent):
             description="Recommends attractions matching user travel preferences"
         )
         load_dotenv()
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+        self.model = (
+            os.getenv("SPOT_RECOMMENDATION_MODEL", "").strip()
+            or os.getenv("DEEPSEEK_MODEL", "").strip()
+            or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
+            or "deepseek-chat"
+        )
         self._client: Optional["OpenAI"] = None
 
     def process(self, context: PlanningContext) -> PlanningContext:
@@ -122,7 +127,7 @@ class SpotRecommendationAgent(BaseAgent):
         return self._fallback_spots(travel_profile)
 
     def _recommend_spots_with_openai(self, client: "OpenAI", travel_profile: TravelProfile) -> List[Spot]:
-        """Call OpenAI Responses API and map the structured result into Spot objects."""
+        """Call OpenAI-compatible chat completions API and map result into Spot objects."""
         duration_days = (travel_profile.end_date - travel_profile.start_date).days + 1
         prompt = SPOT_RECOMMENDATION_PROMPT.format(
             destination=travel_profile.destination,
@@ -132,39 +137,28 @@ class SpotRecommendationAgent(BaseAgent):
             duration_days=duration_days,
         )
 
-        response = client.responses.create(
+        schema = self._spot_response_schema()
+        response = client.chat.completions.create(
             model=self.model,
-            input=[
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": SYSTEM_PROMPT,
-                        }
-                    ],
-                },
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": prompt,
-                        }
-                    ],
+                    "content": (
+                        f"{prompt}\n\n"
+                        "Return JSON object with key 'spots' only. "
+                        f"Schema reference: {json.dumps(schema, ensure_ascii=True)}"
+                    ),
                 },
             ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "spot_recommendations",
-                    "strict": True,
-                    "schema": self._spot_response_schema(),
-                }
-            },
+            temperature=0.3,
+            response_format={"type": "json_object"},
         )
 
-        payload = json.loads(response.output_text)
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("Model returned empty spot recommendations")
+        payload = json.loads(content)
         raw_spots = payload.get("spots", [])
 
         if not raw_spots:
@@ -177,16 +171,27 @@ class SpotRecommendationAgent(BaseAgent):
         if self._client is not None:
             return self._client
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = (
+            os.getenv("SPOT_RECOMMENDATION_API_KEY", "").strip()
+            or os.getenv("DEEPSEEK_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+        base_url = (
+            os.getenv("SPOT_RECOMMENDATION_BASE_URL", "").strip()
+            or os.getenv("DEEPSEEK_BASE_URL", "").strip()
+            or os.getenv("OPENAI_BASE_URL", "").strip()
+            or None
+        )
         if (
             not api_key
             or api_key == "OPENAI_API_KEY"
+            or api_key == "DEEPSEEK_API_KEY"
             or api_key.startswith("REPLACE_WITH_")
             or OpenAI is None
         ):
             return None
 
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
         return self._client
 
     def _build_spot(self, item: Dict[str, Any]) -> Spot:

@@ -211,6 +211,23 @@ def test_analyze_costs_contingency_is_5_percent(agent):
     assert breakdown.contingency == pytest.approx(10.0, abs=0.01)
 
 
+def test_analyze_costs_backfills_unclassified_day_remainder_into_dining(agent):
+    days = [
+        DayItinerary(
+            day_number=1,
+            date=date(2024, 8, 1),
+            activities=[{"name": "Museum", "category": "attractions", "cost": 20}],
+            accommodation={"name": "Hotel A", "cost_per_night": 100},
+            total_estimated_cost=180.0,  # includes implicit meals not itemized in activities
+        ),
+    ]
+    itinerary = Itinerary(location="Rome", start_date=date(2024, 8, 1), end_date=date(2024, 8, 1), days=days)
+    breakdown = agent._analyze_costs(itinerary)
+    assert breakdown.attractions == 20.0
+    assert breakdown.accommodation == 100.0
+    assert breakdown.dining == 60.0
+
+
 # ── _generate_recommendations ────────────────────────────────────────────────
 
 def test_no_recommendations_within_budget(agent):

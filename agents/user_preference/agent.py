@@ -33,7 +33,12 @@ class UserPreferenceAgent(BaseAgent):
             'budget', 'group_size', 'travel_style'
         ]
         self._client = self._create_openai_client()
-        self._model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+        self._model = (
+            os.getenv("USER_PREFERENCE_MODEL", "").strip()
+            or os.getenv("DEEPSEEK_MODEL", "").strip()
+            or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
+            or "deepseek-chat"
+        )
 
     def process(self, context: PlanningContext) -> PlanningContext:
         """
@@ -96,10 +101,20 @@ class UserPreferenceAgent(BaseAgent):
 
     def _create_openai_client(self) -> Any:
         """Create OpenAI client when API key is available."""
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        if not api_key or api_key == "OPENAI_API_KEY":
+        api_key = (
+            os.getenv("USER_PREFERENCE_API_KEY", "").strip()
+            or os.getenv("DEEPSEEK_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+        if (not api_key) or api_key in {"OPENAI_API_KEY", "DEEPSEEK_API_KEY"} or api_key.startswith("REPLACE_WITH_"):
             return None
-        return OpenAI(api_key=api_key)
+        base_url = (
+            os.getenv("USER_PREFERENCE_BASE_URL", "").strip()
+            or os.getenv("DEEPSEEK_BASE_URL", "").strip()
+            or os.getenv("OPENAI_BASE_URL", "").strip()
+            or None
+        )
+        return OpenAI(api_key=api_key, base_url=base_url)
 
     def _extract_preferences_llm(self, user_input: str) -> Dict[str, Any]:
         """Extract preferences through an LLM call."""

@@ -63,7 +63,7 @@ def test_validate_input_failure(agent):
 
 
 def test_recommend_spots_uses_openai_when_client_available(agent, sample_context, monkeypatch):
-    class FakeResponses:
+    class FakeChatCompletions:
         @staticmethod
         def create(**kwargs):
             assert kwargs["model"] == agent.model
@@ -71,28 +71,46 @@ def test_recommend_spots_uses_openai_when_client_available(agent, sample_context
                 "FakeResponse",
                 (),
                 {
-                    "output_text": json.dumps(
-                        {
-                            "spots": [
-                                {
-                                    "name": "Louvre Museum",
-                                    "description": "Major art museum in Paris.",
-                                    "location": "Rue de Rivoli, Paris",
-                                    "category": "art",
-                                    "opening_hours": "09:00 - 18:00",
-                                    "entrance_fee": 22.0,
-                                    "rating": 4.8,
-                                    "duration_hours": 3.0,
-                                    "best_season": "year-round",
-                                    "accessibility_notes": "Accessible entrances available.",
-                                }
-                            ]
-                        }
-                    )
+                    "choices": [
+                        type(
+                            "Choice",
+                            (),
+                            {
+                                "message": type(
+                                    "Message",
+                                    (),
+                                    {
+                                        "content": json.dumps(
+                                            {
+                                                "spots": [
+                                                    {
+                                                        "name": "Louvre Museum",
+                                                        "description": "Major art museum in Paris.",
+                                                        "location": "Rue de Rivoli, Paris",
+                                                        "category": "art",
+                                                        "opening_hours": "09:00 - 18:00",
+                                                        "entrance_fee": 22.0,
+                                                        "rating": 4.8,
+                                                        "duration_hours": 3.0,
+                                                        "best_season": "year-round",
+                                                        "accessibility_notes": "Accessible entrances available.",
+                                                    }
+                                                ]
+                                            }
+                                        )
+                                    },
+                                )()
+                            },
+                        )()
+                    ]
                 },
             )()
 
-    fake_client = type("FakeClient", (), {"responses": FakeResponses()})()
+    fake_client = type(
+        "FakeClient",
+        (),
+        {"chat": type("Chat", (), {"completions": FakeChatCompletions()})()},
+    )()
     monkeypatch.setattr(agent, "_get_client", lambda: fake_client)
 
     spots = agent._recommend_spots(sample_context.travel_profile)
