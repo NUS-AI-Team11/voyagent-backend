@@ -41,6 +41,8 @@ class SpotRecommendationAgent(BaseAgent):
             or os.getenv("OPENAI_MODEL", "deepseek-chat").strip()
             or "deepseek-chat"
         )
+        self._timeout_seconds = self._safe_float(os.getenv("SPOT_RECOMMENDATION_TIMEOUT", "20"), default=20.0)
+        self._max_retries = max(0, int(self._safe_float(os.getenv("SPOT_RECOMMENDATION_MAX_RETRIES", "1"), default=1.0)))
         self._client: Optional["OpenAI"] = None
 
     def process(self, context: PlanningContext) -> PlanningContext:
@@ -137,7 +139,6 @@ class SpotRecommendationAgent(BaseAgent):
             duration_days=duration_days,
         )
 
-        schema = self._spot_response_schema()
         response = client.chat.completions.create(
             model=self.model,
             messages=[
@@ -146,8 +147,9 @@ class SpotRecommendationAgent(BaseAgent):
                     "role": "user",
                     "content": (
                         f"{prompt}\n\n"
-                        "Return JSON object with key 'spots' only. "
-                        f"Schema reference: {json.dumps(schema, ensure_ascii=True)}"
+                        "Return JSON object only with top-level key 'spots'. "
+                        "Each item requires: name, description, location, category, opening_hours, entrance_fee, "
+                        "rating, duration_hours, best_season, accessibility_notes."
                     ),
                 },
             ],
@@ -191,7 +193,12 @@ class SpotRecommendationAgent(BaseAgent):
         ):
             return None
 
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=self._timeout_seconds,
+            max_retries=self._max_retries,
+        )
         return self._client
 
     def _build_spot(self, item: Dict[str, Any]) -> Spot:

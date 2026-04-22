@@ -212,7 +212,12 @@ def run_plan_stream(body: PlanRequest) -> StreamingResponse:
 
         threading.Thread(target=worker, daemon=True).start()
         while True:
-            kind, data = q.get()
+            try:
+                kind, data = q.get(timeout=10)
+            except queue.Empty:
+                # Keep SSE connections alive during long-running LLM calls.
+                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                continue
             if kind == "end":
                 break
             yield f"data: {json.dumps(data, default=str)}\n\n"
