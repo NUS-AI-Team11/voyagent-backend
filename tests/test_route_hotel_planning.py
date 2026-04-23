@@ -299,5 +299,89 @@ def test_meal_selection_respects_budget_prefers_lower_cost(agent):
     assert all(getattr(r, "name") != "Luxury A" for r in chosen if r is not None)
 
 
+def test_config_safety_helpers(agent):
+    assert RouteHotelPlanningAgent._safe_int(" 3 ", default=2, minimum=1) == 3
+    assert RouteHotelPlanningAgent._safe_int("bad", default=2, minimum=1) == 2
+    assert RouteHotelPlanningAgent._safe_int("-10", default=2, minimum=1) == 1
+
+    assert RouteHotelPlanningAgent._safe_float("0.7", default=0.2) == 0.7
+    assert RouteHotelPlanningAgent._safe_float("bad", default=0.2) == 0.2
+    assert RouteHotelPlanningAgent._safe_float("5", default=0.2, maximum=1.0) == 1.0
+    assert RouteHotelPlanningAgent._safe_float("-1", default=0.2, minimum=0.0) == 0.0
+
+    assert RouteHotelPlanningAgent._normalize_api_mode("AUTO") == "auto"
+    assert RouteHotelPlanningAgent._normalize_api_mode("forced") == "forced"
+    assert RouteHotelPlanningAgent._normalize_api_mode("off") == "off"
+    assert RouteHotelPlanningAgent._normalize_api_mode("unknown", default="auto") == "auto"
+
+
+def test_time_helpers_and_opening_hours_parsing(agent):
+    assert agent._parse_time_hhmm("00:00") == 0
+    assert agent._parse_time_hhmm("23:59") == 23 * 60 + 59
+    assert agent._format_time_hhmm(0) == "00:00"
+    assert agent._format_time_hhmm(24 * 60 + 1) == "00:01"
+
+    minutes, taken = agent._apply_lunch_window(agent._parse_time_hhmm("12:30"), False)
+    assert taken is True
+    assert minutes == agent._parse_time_hhmm("13:30")
+
+    assert agent._parse_opening_hours(None) == (None, None)
+    assert agent._parse_opening_hours("bad") == (None, None)
+    assert agent._parse_opening_hours("11:00-18:00") == (agent._parse_time_hhmm("11:00"), agent._parse_time_hhmm("18:00"))
+    start, end = agent._parse_opening_hours("18:00-11:00")
+    assert start == agent._parse_time_hhmm("18:00")
+    assert end is None
+
+
+def test_extract_responses_output_text_prefers_output_text_then_falls_back(agent):
+    assert agent._extract_responses_output_text({"output_text": " hi "}) == " hi "
+    payload = {
+        "output": [
+            {"content": [{"text": "Hello"}, {"text": "World"}]},
+            {"content": [{"text": "!"}]},
+        ]
+    }
+    assert agent._extract_responses_output_text(payload) == "Hello\nWorld\n!"
+
+
+def test_parse_json_block_extracts_first_json_object_or_array(agent):
+    assert agent._parse_json_block('{"a": 1}') == {"a": 1}
+    assert agent._parse_json_block('[{"a": 1}]') == [{"a": 1}]
+    assert agent._parse_json_block("prefix {\"a\": 2} suffix") == {"a": 2}
+    assert agent._parse_json_block("prefix [1, 2, 3] suffix") == [1, 2, 3]
+    assert agent._parse_json_block("no json here") is None
+
+
+def test_normalize_api_hotel_candidates_dedup_clamps_and_falls_back(agent):
+    parsed = [
+        {"name": "Hotel A", "address": "A District, City", "cost_per_night": "120", "rating": "4.7"},
+        {"name": "Hotel B", "address": "A District, City", "cost_per_night": 140, "rating": 2.0},
+        {"address": "", "cost_per_night": None, "rating": None},
+        "not a dict",
+        {"name": "", "address": "City Center, City", "cost_per_night": "bad", "rating": "6.0"},
+    ]
+    fallback = ["B District, City", "C District, City"]
+    out = agent._normalize_api_hotel_candidates(parsed=parsed, fallback_addresses=fallback, base_nightly_cost=200.0, destination="City")
+    assert len(out) == 2
+    assert out[0]["address"] == "A District, City"
+    assert out[0]["cost_per_night"] == 120.0
+    assert out[0]["rating"] == 4.7
+    assert out[1]["address"] == "City Center, City"
+    assert out[1]["rating"] == 4.2
+
+
+def test_score_hotel_candidate_penalizes_city_center_and_prefers_target_price(agent):
+    target = 200.0
+    good = {"address": "X District, City", "cost_per_night": 200.0, "rating": 4.2}
+    pricey = {"address": "X District, City", "cost_per_night": 400.0, "rating": 4.2}
+    center = {"address": "City Center, City", "cost_per_night": 200.0, "rating": 4.2}
+
+    good_score = agent._score_hotel_candidate(good, candidate_index=0, target_cost=target)
+    pricey_score = agent._score_hotel_candidate(pricey, candidate_index=0, target_cost=target)
+    center_score = agent._score_hotel_candidate(center, candidate_index=0, target_cost=target)
+    assert good_score > pricey_score
+    assert good_score > center_score
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
